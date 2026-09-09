@@ -1,0 +1,8 @@
+.direnv
+.env*
+
+node_modules/
+
+data/*
+metadata/*
+
