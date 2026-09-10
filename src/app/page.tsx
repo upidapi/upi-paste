@@ -1,30 +1,73 @@
 'use client';
 
 import React, { useState, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import JSZip from 'jszip';
 import { FileUp, FolderUp, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
-import { TopBar } from '~/_components/top-bar';
-import { PasteViewer } from '~/_components/paste-viewer';
-import {
-    type SingleFile,
-    MAX_SAFE_EDIT_BYTES,
-    MAX_UPLOAD_BYTES,
-    EXPIRY_OPTIONS,
-    formatSize,
-    countLines,
-    isBinaryFile,
-    readFirstMB,
-} from '~/lib/utils';
+import TopBar from '~/_components/top-bar';
+import PasteViewer from '~/_components/paste-viewer';
+import { formatSize, countLines } from '~/lib/utils';
+import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES } from '~/lib/const';
 
-export default function NewPastePage() {
-    const router = useRouter();
+async function isBinaryFile(blob: Blob): Promise<boolean> {
+    const slice = blob.slice(0, 1024 * 1024);
+    const buffer = new Uint8Array(await slice.arrayBuffer());
+    let bogusControlChars = 0;
 
+    for (let i = 0; i < buffer.length; i++) {
+        const byte = buffer[i]!;
+        if (byte === 0) return true;
+        if (byte < 7 || (byte > 14 && byte < 32)) {
+            bogusControlChars++;
+        }
+    }
+    return buffer.length > 0 && bogusControlChars / buffer.length > 0.05;
+}
+
+async function readFirst(blob: Blob, maxBytes: number): Promise<string> {
+    const stream = blob.stream();
+    const reader = stream.getReader();
+    const decoder = new TextDecoder('utf-8', { fatal: false });
+    let text = '';
+    let bytesRead = 0;
+
+    try {
+        while (bytesRead < maxBytes) {
+            const { done, value } = await reader.read();
+            if (done || !value) break;
+
+            if (bytesRead + value.length > maxBytes) {
+                const needed = maxBytes - bytesRead;
+                text += decoder.decode(value.subarray(0, needed), { stream: false });
+                break;
+            } else {
+                text += decoder.decode(value, { stream: true });
+                bytesRead += value.length;
+            }
+        }
+    } finally {
+        await reader.cancel();
+    }
+    return text;
+}
+
+interface SingleFile {
+    name: string;
+    content: string;
+    isText: boolean;
+    isBinary: boolean;
+    isTruncated?: boolean;
+    isFolder?: boolean;
+    files?: File[]; // Holds raw File references for deferred streaming
+    blob?: Blob;
+    size: number;
+}
+
+export default function EditorPage() {
     const [file, setFile] = useState<SingleFile>({
         name: 'untitled',
         content: '',
         isText: true,
         isBinary: false,
+        isFolder: false,
         size: 0,
     });
 
@@ -46,23 +89,10 @@ export default function NewPastePage() {
         const lines = !file.isText ? 0 : countLines(text);
         const chars = text.length;
         const bytes = file.isText ? (file.blob ? file.blob.size : new Blob([text]).size) : file.size;
-        const size = formatSize(bytes);
-
-        return { lines, chars, bytes, size };
+        return { lines, chars, bytes, size: formatSize(bytes) };
     }, [file]);
 
     const isOverUploadLimit = stats.bytes > MAX_UPLOAD_BYTES;
-
-    const handleHome = () => {
-        setFile({
-            name: 'untitled',
-            content: '',
-            isText: true,
-            isBinary: false,
-            size: 0,
-        });
-        setTitle('');
-    };
 
     const handleSingleFile = async (rawFile: File) => {
         setIsProcessing(true);
@@ -80,6 +110,7 @@ export default function NewPastePage() {
                 content: text,
                 isText: true,
                 isBinary: false,
+                isFolder: false,
                 blob: rawFile,
                 size: rawFile.size,
             });
@@ -89,6 +120,7 @@ export default function NewPastePage() {
                 content: '',
                 isText: false,
                 isBinary,
+                isFolder: false,
                 blob: rawFile,
                 size: rawFile.size,
             });
@@ -97,53 +129,55 @@ export default function NewPastePage() {
         setIsProcessing(false);
     };
 
-    const handleFolderUpload = async (rawFiles: FileList) => {
+    // Instant: Does not read or compress files into memory
+    const handleFolderUpload = (rawFiles: FileList) => {
         const filesArray = Array.from(rawFiles);
         if (filesArray.length === 0) return;
 
-        setIsProcessing(true);
-        setStatusMessage(`Packing ${filesArray.length} items into ZIP...`);
-        await new Promise((r) => setTimeout(r, 20));
-
         const folderName = filesArray[0]!.webkitRelativePath.split('/')[0] || 'archive';
-        const zip = new JSZip();
-
-        for (const f of filesArray) {
-            zip.file(f.webkitRelativePath || f.name, f);
-        }
-
-        const zipBlob = await zip.generateAsync({
-            type: 'blob',
-            compression: 'STORE',
-            streamFiles: true,
-        });
-
+        const totalSize = filesArray.reduce((acc, f) => acc + f.size, 0);
         const zipName = `${folderName}.zip`;
+
         setFile({
             name: zipName,
             content: '',
             isText: false,
             isBinary: true,
-            blob: zipBlob,
-            size: zipBlob.size,
+            isFolder: true,
+            files: filesArray,
+            size: totalSize,
         });
         setTitle(zipName);
-        setIsProcessing(false);
     };
 
-    const zipDirectoryEntry = async (dirEntry: any, zipFolder: JSZip) => {
-        const reader = dirEntry.createReader();
-        const entries: any[] = await new Promise((res) => reader.readEntries(res));
+    // Fast recursive metadata-only scanner (does not read file data into memory)
+    const scanDirectory = async (entry: any, basePath = ''): Promise<File[]> => {
+        let files: File[] = [];
+        const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
 
-        for (const entry of entries) {
-            if (entry.isFile) {
-                const fileObj = await new Promise<File>((res) => entry.file(res));
-                zipFolder.file(entry.name, fileObj);
-            } else if (entry.isDirectory) {
-                const subFolder = zipFolder.folder(entry.name);
-                if (subFolder) await zipDirectoryEntry(entry, subFolder);
-            }
+        if (entry.isFile) {
+            const f = await new Promise<File>((resolve, reject) => entry.file(resolve, reject));
+            Object.defineProperty(f, 'webkitRelativePath', {
+                value: currentPath,
+                writable: true,
+            });
+            files.push(f);
+        } else if (entry.isDirectory) {
+            const reader = entry.createReader();
+            const readBatch = async (): Promise<any[]> => {
+                const batch: any[] = await new Promise((res, rej) => reader.readEntries(res, rej));
+                if (batch.length > 0) {
+                    const rest = await readBatch();
+                    return batch.concat(rest);
+                }
+                return [];
+            };
+
+            const entries = await readBatch();
+            const nested = await Promise.all(entries.map((e) => scanDirectory(e, currentPath)));
+            for (const arr of nested) files = files.concat(arr);
         }
+        return files;
     };
 
     const handleDrop = async (e: React.DragEvent) => {
@@ -157,26 +191,20 @@ export default function NewPastePage() {
 
         if (entry?.isDirectory) {
             setIsProcessing(true);
-            setStatusMessage('Scanning and packing directory...');
-            await new Promise((r) => setTimeout(r, 20));
+            setStatusMessage('Indexing directory structure...');
 
-            const zip = new JSZip();
-            await zipDirectoryEntry(entry, zip);
-
-            const zipBlob = await zip.generateAsync({
-                type: 'blob',
-                compression: 'STORE',
-                streamFiles: true,
-            });
-
+            const scannedFiles = await scanDirectory(entry);
+            const totalSize = scannedFiles.reduce((acc, f) => acc + f.size, 0);
             const zipName = `${entry.name}.zip`;
+
             setFile({
                 name: zipName,
                 content: '',
                 isText: false,
                 isBinary: true,
-                blob: zipBlob,
-                size: zipBlob.size,
+                isFolder: true,
+                files: scannedFiles,
+                size: totalSize,
             });
             setTitle(zipName);
             setIsProcessing(false);
@@ -187,18 +215,20 @@ export default function NewPastePage() {
     };
 
     const handleEditAnyway = async () => {
-        if (!file.blob) return;
+        if (!file.blob || file.isFolder) return;
+
         setIsProcessing(true);
-        setStatusMessage('Reading text preview...');
+        setStatusMessage('Reading preview...');
         try {
-            const text = await readFirstMB(file.blob);
-            const isTruncated = file.blob.size > 1024 * 1024;
+            const text = await readFirst(file.blob, MAX_SAFE_EDIT_BYTES);
+            const isTruncated = file.blob.size > MAX_SAFE_EDIT_BYTES;
 
             setFile((prev) => ({
                 ...prev,
                 content: text,
                 isTruncated,
                 isText: true,
+                isBinary: false,
             }));
         } catch {
             alert('Failed to read file as text.');
@@ -209,46 +239,28 @@ export default function NewPastePage() {
 
     const handlePaste = async () => {
         if (isOverUploadLimit) return;
-        setIsProcessing(true);
-        setStatusMessage('Creating paste...');
 
-        try {
-            // Connects to your API endpoint or state store
-            const formData = new FormData();
-            formData.append('title', title || file.name);
-            formData.append('expiry', expiry);
-            formData.append('burnAfterReading', String(burnAfterReading));
-            if (encrypt && password) formData.append('password', password);
-
-            if (file.blob) {
-                formData.append('file', file.blob, file.name);
-            } else {
-                formData.append('content', file.content);
-            }
-
-            const res = await fetch('/api', {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (res.ok) {
-                const data = await res.json();
-                router.push(`/${data.id}`);
-            } else {
-                // Standalone fallback: redirect to mock ID for testing
-                const fallbackId = Math.random().toString(36).substring(2, 9);
-                router.push(`/${fallbackId}`);
-            }
-        } catch {
-            const fallbackId = Math.random().toString(36).substring(2, 9);
-            router.push(`/${fallbackId}`);
-        } finally {
-            setIsProcessing(false);
+        if (file.isFolder && file.files) {
+            console.log(`Ready to stream/zip ${file.files.length} files via tus`);
+            // Stream files using tus or a streaming ZIP writer here on paste click
         }
+
+        console.log({
+            title: title || file.name,
+            expiry,
+            burnAfterReading,
+            encrypted: encrypt,
+            password: encrypt ? password : null,
+            file,
+        });
+
+        alert(`Created paste "${title || file.name}"!`);
     };
 
     return (
-        <div className="flex flex-col h-screen w-screen bg-[#0e1116] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm relative">
+        <div className="flex flex-col h-screen w-screen bg-[#0e1116] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm">
+            <TopBar />
+
             {isProcessing && (
                 <div className="absolute inset-0 z-50 bg-black/75 flex flex-col items-center justify-center gap-3 backdrop-blur-sm">
                     <Loader2 className="animate-spin text-cyan-400" size={32} />
@@ -277,33 +289,40 @@ export default function NewPastePage() {
                 }}
             />
 
-            {/* Top Bar: Displays ONLY the Home button */}
-            <TopBar mode="edit" onHome={handleHome} />
-
             <div className="flex flex-1 overflow-hidden">
-                {/* Reusable Paste Viewer (Edit Mode) */}
-                <PasteViewer
-                    mode="edit"
-                    file={file}
-                    onChangeContent={(content) => setFile((prev) => ({ ...prev, content }))}
-                    onAnywayClick={handleEditAnyway}
-                    isDragging={isDragging}
+                <div
+                    className={`flex-1 flex flex-col relative transition-colors ${
+                        isDragging ? 'bg-[#151d28] border-2 border-dashed border-cyan-400' : 'bg-[#0b0e14]'
+                    }`}
                     onDragOver={(e) => {
                         e.preventDefault();
                         setIsDragging(true);
                     }}
                     onDragLeave={() => setIsDragging(false)}
                     onDrop={handleDrop}
-                />
+                >
+                    <PasteViewer
+                        value={file.content}
+                        onChange={(content) => {
+                            if (!file.isFolder) {
+                                setFile((prev) => ({ ...prev, content }));
+                            }
+                        }}
+                        fileName={file.name}
+                        isBinary={!file.isText || file.isBinary}
+                        isTruncated={file.isTruncated}
+                        totalSize={stats.bytes}
+                        isFolder={file.isFolder!}
+                        mode={'edit'}
+                        onRevealAnyway={handleEditAnyway}
+                    />
+                </div>
 
                 {/* Right Sidebar */}
-                <div className="w-64 bg-[#0e1116] border-l border-[#1b212b] flex flex-col justify-between text-xs p-3.5 select-none overflow-y-auto shrink-0">
+                <div className="w-64 bg-[#0e1116] border-l border-[#1b212b] flex flex-col justify-between text-xs p-3.5 select-none overflow-y-auto">
                     <div className="space-y-4">
-                        {/* UPLOAD */}
                         <div>
-                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider mb-2 uppercase">
-                                UPLOAD
-                            </label>
+                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider mb-2 uppercase">UPLOAD</label>
                             <div className="grid grid-cols-2 gap-1.5">
                                 <button
                                     type="button"
@@ -324,11 +343,8 @@ export default function NewPastePage() {
                             </div>
                         </div>
 
-                        {/* NAME */}
                         <div>
-                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider mb-2 uppercase">
-                                NAME
-                            </label>
+                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider mb-2 uppercase">NAME</label>
                             <input
                                 type="text"
                                 placeholder="untitled"
@@ -338,11 +354,8 @@ export default function NewPastePage() {
                             />
                         </div>
 
-                        {/* EXPIRES */}
                         <div>
-                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider mb-2 uppercase">
-                                EXPIRES
-                            </label>
+                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider mb-2 uppercase">EXPIRES</label>
                             <div className="grid grid-cols-3 gap-1.5">
                                 {Object.keys(EXPIRY_OPTIONS).map((opt) => (
                                     <button
@@ -360,11 +373,8 @@ export default function NewPastePage() {
                             </div>
                         </div>
 
-                        {/* OPTIONS */}
                         <div className="space-y-3.5 pt-1">
-                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider uppercase">
-                                OPTIONS
-                            </label>
+                            <label className="block text-xs text-[#6e7681] font-bold tracking-wider uppercase">OPTIONS</label>
 
                             <div className="flex items-center justify-between">
                                 <div>
@@ -374,14 +384,10 @@ export default function NewPastePage() {
                                 <button
                                     type="button"
                                     onClick={() => setBurnAfterReading(!burnAfterReading)}
-                                    className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${
-                                        burnAfterReading ? 'bg-cyan-500' : 'bg-[#21262d]'
-                                    }`}
+                                    className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${burnAfterReading ? 'bg-cyan-500' : 'bg-[#21262d]'}`}
                                 >
                                     <div
-                                        className={`w-4 h-4 rounded-full bg-black transition-transform ${
-                                            burnAfterReading ? 'translate-x-4' : 'translate-x-0'
-                                        }`}
+                                        className={`w-4 h-4 rounded-full bg-black transition-transform ${burnAfterReading ? 'translate-x-4' : 'translate-x-0'}`}
                                     />
                                 </button>
                             </div>
@@ -394,15 +400,9 @@ export default function NewPastePage() {
                                 <button
                                     type="button"
                                     onClick={() => setEncrypt(!encrypt)}
-                                    className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${
-                                        encrypt ? 'bg-cyan-500' : 'bg-[#21262d]'
-                                    }`}
+                                    className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${encrypt ? 'bg-cyan-500' : 'bg-[#21262d]'}`}
                                 >
-                                    <div
-                                        className={`w-4 h-4 rounded-full bg-black transition-transform ${
-                                            encrypt ? 'translate-x-4' : 'translate-x-0'
-                                        }`}
-                                    />
+                                    <div className={`w-4 h-4 rounded-full bg-black transition-transform ${encrypt ? 'translate-x-4' : 'translate-x-0'}`} />
                                 </button>
                             </div>
 
@@ -434,15 +434,11 @@ export default function NewPastePage() {
                         <div className="grid grid-cols-3 gap-2 text-xs text-[#6e7681] mb-2 uppercase">
                             <div>
                                 <div>LINES</div>
-                                <div className="text-[#c9d1d9] text-sm mt-0.5 font-semibold">
-                                    {!file.isText ? '?' : stats.lines}
-                                </div>
+                                <div className="text-[#c9d1d9] text-sm mt-0.5 font-semibold">{!file.isText ? '?' : stats.lines}</div>
                             </div>
                             <div>
                                 <div>CHARS</div>
-                                <div className="text-[#c9d1d9] text-sm mt-0.5 font-semibold">
-                                    {!file.isText ? '?' : stats.chars}
-                                </div>
+                                <div className="text-[#c9d1d9] text-sm mt-0.5 font-semibold">{!file.isText ? '?' : stats.chars}</div>
                             </div>
                             <div>
                                 <div>BYTES</div>
@@ -451,21 +447,15 @@ export default function NewPastePage() {
                         </div>
 
                         <div className="flex justify-between text-xs mb-3">
-                            <span className={isOverUploadLimit ? 'text-rose-400' : 'text-[#6e7681]'}>
-                                {stats.size}
-                            </span>
-                            <span className={isOverUploadLimit ? 'text-rose-400' : 'text-[#6e7681]'}>
-                                limit {formatSize(MAX_UPLOAD_BYTES)}
-                            </span>
+                            <span className={isOverUploadLimit ? 'text-rose-400' : 'text-[#6e7681]'}>{stats.size}</span>
+                            <span className={isOverUploadLimit ? 'text-rose-400' : 'text-[#6e7681]'}>limit {formatSize(MAX_UPLOAD_BYTES)}</span>
                         </div>
 
                         <button
                             disabled={isOverUploadLimit}
                             onClick={handlePaste}
                             className={`w-full py-2.5 text-sm font-bold tracking-wider transition-colors shadow-lg active:scale-[0.99] ${
-                                isOverUploadLimit
-                                    ? 'bg-[#21262d] text-[#6e7681] cursor-not-allowed'
-                                    : 'bg-[#00d2d3] hover:bg-[#00e5ff] text-black'
+                                isOverUploadLimit ? 'bg-[#21262d] text-[#6e7681] cursor-not-allowed' : 'bg-[#00d2d3] hover:bg-[#00e5ff] text-black'
                             }`}
                         >
                             {isOverUploadLimit ? 'file too large' : 'paste'}

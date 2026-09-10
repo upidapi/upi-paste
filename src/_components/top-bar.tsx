@@ -1,116 +1,80 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Home, Trash2, Download, Copy, Check, FileCode, QrCode } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Home } from 'lucide-react';
 
 interface TopBarProps {
-    mode: 'edit' | 'view';
-    expiryText?: string;
-    onHome?: () => void;
-    onDelete?: () => void;
-    onDownload?: () => void;
-    onCopy?: () => void;
-    onRaw?: () => void;
-    onQrCode?: () => void;
+    showExpiry?: boolean;
+    expiresAt?: Date | string | number | null;
+    children?: React.ReactNode;
 }
 
-export function TopBar({
-    mode,
-    expiryText,
-    onHome,
-    onDelete,
-    onDownload,
-    onCopy,
-    onRaw,
-    onQrCode,
-}: TopBarProps) {
-    const [copied, setCopied] = useState(false);
+function formatTimeRemaining(target: Date | string | number): string {
+    const end = new Date(target).getTime();
+    const diff = Math.max(0, Math.floor((end - Date.now()) / 1000));
 
-    const handleCopyClick = () => {
-        onCopy?.();
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
+    if (diff <= 0) return 'expired';
+
+    const weeks = Math.floor(diff / (7 * 24 * 3600));
+    let rem = diff % (7 * 24 * 3600);
+
+    const days = Math.floor(rem / (24 * 3600));
+    rem %= (24 * 3600);
+
+    const hours = Math.floor(rem / 3600);
+    rem %= 3600;
+
+    const mins = Math.floor(rem / 60);
+    const secs = rem % 60;
+
+    const parts: string[] = [];
+    if (weeks > 0) parts.push(`${weeks} ${weeks === 1 ? 'week' : 'weeks'}`);
+    if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+    if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+    if (mins > 0) parts.push(`${mins} ${mins === 1 ? 'min' : 'mins'}`);
+    parts.push(`${secs} ${secs === 1 ? 'sec' : 'secs'}`);
+
+    return `expires in ${parts.join(', ')}`;
+}
+
+export default function TopBar({ showExpiry = false, expiresAt, children }: TopBarProps) {
+    const [countdown, setCountdown] = useState<string>('');
+
+    useEffect(() => {
+        if (!showExpiry || !expiresAt) {
+            setCountdown('');
+            return;
+        }
+
+        const update = () => {
+            setCountdown(formatTimeRemaining(expiresAt));
+        };
+
+        update();
+        const interval = setInterval(update, 1000);
+        return () => clearInterval(interval);
+    }, [showExpiry, expiresAt]);
 
     return (
-        <header className="h-10 bg-[#0e1116] border-b border-[#1b212b] px-3.5 flex items-center justify-between select-none shrink-0 z-20">
-            {/* Left: Home button (+ Expiry info in view mode) */}
+        <header className="h-10 w-full bg-[#0e1116] border-b border-[#1b212b] px-3.5 flex items-center justify-between select-none text-xs font-mono">
             <div className="flex items-center gap-3">
-                <button
-                    type="button"
-                    onClick={onHome}
-                    title="Home (New paste)"
-                    aria-label="Home"
-                    className="text-[#8b949e] hover:text-[#c9d1d9] p-1.5 rounded hover:bg-[#161b22] transition-colors"
+                <Link
+                    href="/"
+                    title="Home"
+                    className="text-[#8b949e] hover:text-[#00d2d3] transition-colors flex items-center justify-center p-1 rounded"
                 >
                     <Home size={16} />
-                </button>
+                </Link>
 
-                {mode === 'view' && expiryText && (
-                    <span className="text-xs text-[#8b949e] font-mono tracking-tight select-text">
-                        {expiryText}
-                    </span>
+                {showExpiry && countdown && (
+                    <span className="text-[#8b949e] tracking-tight">{countdown}</span>
                 )}
             </div>
 
-            {/* Right: Wastebin Action buttons (Only displayed in view mode) */}
-            {mode === 'view' && (
-                <div className="flex items-center gap-1">
-                    {onDelete && (
-                        <button
-                            type="button"
-                            onClick={onDelete}
-                            title="Delete paste"
-                            aria-label="Delete paste"
-                            className="text-[#f85149] hover:text-[#ff7b72] hover:bg-[#f85149]/10 p-1.5 rounded transition-colors"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    )}
-                    {onDownload && (
-                        <button
-                            type="button"
-                            onClick={onDownload}
-                            title="Download"
-                            aria-label="Download"
-                            className="text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#161b22] p-1.5 rounded transition-colors"
-                        >
-                            <Download size={16} />
-                        </button>
-                    )}
-                    {onRaw && (
-                        <button
-                            type="button"
-                            onClick={onRaw}
-                            title="Raw text"
-                            aria-label="Raw text"
-                            className="text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#161b22] p-1.5 rounded transition-colors"
-                        >
-                            <FileCode size={16} />
-                        </button>
-                    )}
-                    {onCopy && (
-                        <button
-                            type="button"
-                            onClick={handleCopyClick}
-                            title={copied ? 'Copied!' : 'Copy to clipboard'}
-                            aria-label="Copy to clipboard"
-                            className="text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#161b22] p-1.5 rounded transition-colors"
-                        >
-                            {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
-                        </button>
-                    )}
-                    {onQrCode && (
-                        <button
-                            type="button"
-                            onClick={onQrCode}
-                            title="Show QR code"
-                            aria-label="Show QR code"
-                            className="text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#161b22] p-1.5 rounded transition-colors"
-                        >
-                            <QrCode size={16} />
-                        </button>
-                    )}
+            {children && (
+                <div className="flex items-center gap-1.5 text-[#8b949e]">
+                    {children}
                 </div>
             )}
         </header>

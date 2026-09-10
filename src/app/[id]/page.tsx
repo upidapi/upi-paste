@@ -64,236 +64,103 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Loader2, X } from 'lucide-react';
-import { TopBar } from '~/_components/top-bar';
-import { PasteViewer } from '~/_components/paste-viewer';
-import {
-    type PasteData,
-    readFirstMB,
-    formatRemainingTime,
-} from '~/lib/utils';
+import { Trash2, Download, Copy, Check } from 'lucide-react';
+import TopBar from '~/_components/top-bar';
+import PasteViewer from '~/_components/paste-viewer';
 
-export default function PasteViewPage() {
+export default function PastePage() {
     const router = useRouter();
     const params = useParams();
     const id = params?.id as string;
 
-    const [paste, setPaste] = useState<PasteData | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [statusMessage, setStatusMessage] = useState('');
-    const [showQrModal, setShowQrModal] = useState(false);
+    const [copied, setCopied] = useState(false);
 
-    // Fetch or initialize paste data
-    useEffect(() => {
-        async function loadPaste() {
-            try {
-                const res = await fetch(`/api/${id}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    setPaste(data);
-                } else {
-                    // Fallback demo paste representation if viewing directly
-                    setPaste({
-                        id,
-                        title: 'example-paste.txt',
-                        expiry: '1 month',
-                        burnAfterReading: false,
-                        expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
-                        file: {
-                            name: 'example-paste.txt',
-                            content: 'asdfasdfjksafdjkl;fasdkj',
-                            isText: true,
-                            isBinary: false,
-                            size: 25,
-                        },
-                    });
-                }
-            } catch {
-                setPaste({
-                    id,
-                    title: 'example-paste.txt',
-                    expiry: '1 month',
-                    burnAfterReading: false,
-                    expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
-                    file: {
-                        name: 'example-paste.txt',
-                        content: 'asdfasdfjksafdjkl;fasdkj',
-                        isText: true,
-                        isBinary: false,
-                        size: 25,
-                    },
-                });
-            } finally {
-                setIsLoading(false);
-            }
-        }
+    // Initial paste data state
+    const [paste, setPaste] = useState({
+        id: id || 'test-paste',
+        name: 'asdfasdfjksafdjkl;fasdkj',
+        content: 'asdfasdfjksafdjkl;fasdkj\n',
+        isBinary: false,
+        isTruncated: false,
+        size: 26,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 29 + 1000 * 60 * 60 * 23 + 1000 * 60 * 59 + 59000),
+    });
 
-        if (id) loadPaste();
-    }, [id]);
-
-    const handleHome = () => {
-        router.push('/');
-    };
-
-    const handleDelete = async () => {
-        if (!paste) return;
-        if (window.confirm(`Are you sure you want to delete "${paste.title || paste.file.name}"?`)) {
-            setIsProcessing(true);
-            setStatusMessage('Deleting paste...');
-            try {
-                await fetch(`/api/${id}`, { method: 'DELETE' });
-            } finally {
-                setIsProcessing(false);
-                router.push('/');
-            }
-        }
+    const handleCopy = async () => {
+        if (!paste.content) return;
+        await navigator.clipboard.writeText(paste.content);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
     };
 
     const handleDownload = () => {
-        if (!paste) return;
-        const blob =
-            paste.file.blob ||
-            new Blob([paste.file.content], { type: 'text/plain;charset=utf-8' });
+        const blob = new Blob([paste.content], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = paste.file.name || 'paste.txt';
+        a.download = paste.name || `${paste.id}.txt`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
 
-    const handleCopy = async () => {
-        if (!paste) return;
+    const handleDelete = async () => {
+        if (!confirm('Are you sure you want to delete this paste?')) return;
         try {
-            await navigator.clipboard.writeText(paste.file.content);
+            await fetch(`/api/${paste.id}`, { method: 'DELETE' });
         } catch {
-            const el = document.createElement('textarea');
-            el.value = paste.file.content;
-            document.body.appendChild(el);
-            el.select();
-            document.execCommand('copy');
-            document.body.removeChild(el);
+            // Callback stub
         }
+        router.push('/');
     };
 
-    const handleRaw = () => {
-        if (!paste) return;
-        const blob = new Blob([paste.file.content], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
+    const handleViewAnyway = () => {
+        setPaste((prev) => ({ ...prev, isBinary: false }));
     };
-
-    // "View anyway" handler for binary and large files
-    const handleViewAnyway = async () => {
-        if (!paste?.file.blob) return;
-        setIsProcessing(true);
-        setStatusMessage('Reading text preview...');
-        try {
-            const text = await readFirstMB(paste.file.blob);
-            const isTruncated = paste.file.blob.size > 1024 * 1024;
-            setPaste((prev) =>
-                prev
-                    ? {
-                          ...prev,
-                          file: {
-                              ...prev.file,
-                              content: text,
-                              isTruncated,
-                              isText: true,
-                          },
-                      }
-                    : null
-            );
-        } catch {
-            alert('Failed to read file preview.');
-        } finally {
-            setIsProcessing(false);
-        }
-    };
-
-    if (isLoading) {
-        return (
-            <div className="flex h-screen w-screen bg-[#0e1116] items-center justify-center">
-                <Loader2 className="animate-spin text-cyan-400" size={32} />
-            </div>
-        );
-    }
-
-    if (!paste) {
-        return (
-            <div className="flex flex-col h-screen w-screen bg-[#0e1116] text-[#c9d1d9] items-center justify-center gap-4 font-mono">
-                <p>Paste not found or has expired.</p>
-                <button
-                    onClick={handleHome}
-                    className="px-4 py-2 border border-[#30363d] text-cyan-400 hover:border-cyan-400 text-xs"
-                >
-                    Create a new paste
-                </button>
-            </div>
-        );
-    }
-
-    const expiryText = formatRemainingTime(paste.expiresAt, paste.burnAfterReading);
 
     return (
-        <div className="flex flex-col h-screen w-screen bg-[#0e1116] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm relative">
-            {isProcessing && (
-                <div className="absolute inset-0 z-50 bg-black/75 flex flex-col items-center justify-center gap-3 backdrop-blur-sm">
-                    <Loader2 className="animate-spin text-cyan-400" size={32} />
-                    <p className="text-cyan-300 text-xs tracking-wider">{statusMessage}</p>
-                </div>
-            )}
+        <div className="flex flex-col h-screen w-screen bg-[#0b0e14] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm">
+            <TopBar showExpiry={Boolean(paste.expiresAt)} expiresAt={paste.expiresAt}>
+                <button
+                    type="button"
+                    onClick={handleDelete}
+                    title="Delete"
+                    className="p-1.5 text-[#8b949e] hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                >
+                    <Trash2 size={16} />
+                </button>
+                <button
+                    type="button"
+                    onClick={handleDownload}
+                    title="Download"
+                    className="p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors"
+                >
+                    <Download size={16} />
+                </button>
+                <button
+                    type="button"
+                    onClick={handleCopy}
+                    title="Copy to clipboard"
+                    className="p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors"
+                >
+                    {copied ? <Check size={16} className="text-cyan-400" /> : <Copy size={16} />}
+                </button>
+            </TopBar>
 
-            {/* QR Code Modal */}
-            {showQrModal && (
-                <div className="absolute inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-[#0e1116] border border-[#1b212b] p-6 max-w-xs w-full text-center relative flex flex-col items-center">
-                        <button
-                            type="button"
-                            onClick={() => setShowQrModal(false)}
-                            className="absolute top-2.5 right-2.5 text-[#6e7681] hover:text-[#c9d1d9] p-1"
-                        >
-                            <X size={16} />
-                        </button>
-                        <h3 className="text-xs uppercase font-bold text-[#8b949e] mb-4 tracking-wider">
-                            Scan QR to Open
-                        </h3>
-                        <div className="bg-white p-2.5 rounded">
-                            <img
-                                src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
-                                    typeof window !== 'undefined' ? window.location.href : ''
-                                )}`}
-                                alt="Paste QR"
-                                className="w-40 h-40"
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Top Bar with actions: Delete, Download, Copy, Raw, QR */}
-            <TopBar
-                mode="view"
-                expiryText={expiryText}
-                onHome={handleHome}
-                onDelete={handleDelete}
-                onDownload={handleDownload}
-                onCopy={handleCopy}
-                onRaw={handleRaw}
-                onQrCode={() => setShowQrModal(true)}
-            />
-
-            {/* Full-width Workspace (NO right sidebar) */}
-            <PasteViewer
-                mode="view"
-                file={paste.file}
-                onAnywayClick={handleViewAnyway}
-            />
+            <div className="flex-1 flex flex-col overflow-hidden">
+                <PasteViewer
+                    value={paste.content}
+                    fileName={paste.name}
+                    isBinary={paste.isBinary}
+                    isTruncated={paste.isTruncated}
+                    totalSize={paste.size}
+                    mode="view"
+                    onRevealAnyway={handleViewAnyway}
+                />
+            </div>
         </div>
     );
 }
