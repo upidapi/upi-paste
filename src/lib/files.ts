@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync } from 'fs';
-import { generateId } from './token';
-import path from 'path';
+import { createUniqueId } from './token';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as z from 'zod';
+
 // import { readdir } from 'fs/promises';
 
 // export function getUploadPath(id: string) {
@@ -9,33 +12,53 @@ import path from 'path';
 
 // const files = (await readdir(path.join(process.cwd(), "data"))).filter(x => x.endsWith(".json"))
 
-type PasteMetadata = {
-    isOneTime: boolean;
-    psw: string;
-    fileName: string;
-};
+export const PasteMetadataSchema = z.object({
+    filename: z.string(),
+    filetype: z.string(),
+    expiry: z.number(),
+    oneTime: z.boolean(),
+    password: z.string(),
+});
+export type PasteMetadata = z.infer<typeof PasteMetadataSchema>;
 
-export function initPaste(params: { isOneTime: boolean; psw: string; filename?: string }) {
-    const id = generateId();
+const usedIds = new Set<string>(['admin']);
+const dirPath = path.join(process.cwd(), 'data', 'paste');
+if (fs.existsSync(dirPath)) {
+    const folders = fs
+        .readdirSync(dirPath, { withFileTypes: true })
+        .filter((dirent) => dirent.isDirectory() && !dirent.name.endsWith('.json'))
+        .map((dirent) => dirent.name);
 
-    const filePath = path.join(process.cwd(), 'data', id);
+    for (const id of folders) {
+        usedIds.add(id);
+    }
+}
+
+export function initPaste(params: PasteMetadata) {
+    const id = createUniqueId((id) => usedIds.has(id));
+    usedIds.add(id);
+
+    const filePath = path.join(process.cwd(), 'data/paste', id);
     const metaPath = filePath + '.json';
 
     const timeStr = new Date().toISOString().replace('T', '_').slice(0, 19);
-    const filename = params.filename ?? `unamed-${timeStr}.txt`;
 
     // save metadata
     writeFileSync(
         metaPath,
         JSON.stringify({
-            isOneTime: params.isOneTime,
-            psw: params.psw,
-            filename,
+            ...params,
+            filename: params.filename ?? `unamed-${timeStr}.txt`,
+            filetype: params.filetype ?? 'application/octet-stream',
         }),
     );
 
     return { id, filePath };
 }
+
+// export function delPaste() {
+//     
+// }
 
 export function getPasteInfo(id: string) {
     const filePath = path.join(process.cwd(), 'data', id);

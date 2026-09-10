@@ -2,25 +2,48 @@ import crypto from 'crypto';
 
 const SECRET_KEY = process.env.TOKEN_SECRET ?? 'your-secret-key';
 
+const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-export function generateId() {
-    // TODO: implement
-    return 'asdf';
+export function generateRandomId(length: number): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(length));
+    let id = '';
+    for (const b of bytes) {
+        id += ALPHABET[b % ALPHABET.length];
+    }
+    return id;
+}
+export function createUniqueId(
+    idExists: (id: string) => boolean, //
+    startLength = 4,
+    maxRetries = 3,
+): string {
+    let length = startLength;
+    let retries = 0;
+
+    while (true) {
+        const id = generateRandomId(length);
+        const exists = idExists(id);
+
+        if (!exists) {
+            return id;
+        }
+
+        retries++;
+        if (retries >= maxRetries) {
+            length++;
+            retries = 0;
+        }
+    }
 }
 
-// Generate a token for an ID
 export function generateToken(id: string): string {
-    return crypto
-        .createHmac('sha256', SECRET_KEY)
-        .update(id)
-        .digest('hex');
+    return crypto.createHmac('sha256', SECRET_KEY).update(id).digest('hex').slice(0, 24);
 }
 
-// Verify if the token matches the ID
 export function verifyToken(id: string, token: string): boolean {
     const expectedToken = generateToken(id);
 
-    // Use timingSafeEqual to prevent timing attacks
+    // prevent timing attacks
     const tokenBuffer = Buffer.from(token);
     const expectedBuffer = Buffer.from(expectedToken);
 

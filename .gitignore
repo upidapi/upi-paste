@@ -1,9 +1,12 @@
 .direnv
-.env*
 .next
 
 node_modules/
 
-data/*
-metadata/*
+data/*/
+
+# metadata/*
+
+.env*
+!.envrc
 

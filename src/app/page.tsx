@@ -9,8 +9,9 @@ import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
 import { formatSize, countLines } from '~/lib/utils';
 import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES } from '~/lib/const';
+import { useRouter } from 'next/navigation';
 
-const URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001';
+const URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
 async function isBinaryFile(blob: Blob): Promise<boolean> {
     const slice = blob.slice(0, 1024 * 1024);
@@ -68,8 +69,10 @@ interface SingleFile {
 }
 
 export default function EditorPage() {
+    const router = useRouter();
+
     const [file, setFile] = useState<SingleFile>({
-        name: 'untitled',
+        name: '',
         content: '',
         isText: true,
         isBinary: false,
@@ -78,7 +81,7 @@ export default function EditorPage() {
     });
 
     const [title, setTitle] = useState('');
-    const [expiry, setExpiry] = useState('1 month');
+    const [expiry, setExpiry] = useState('1 week');
     const [oneTime, setOneTime] = useState(false);
     const [encrypt, setEncrypt] = useState(false);
     const [password, setPassword] = useState('');
@@ -271,7 +274,7 @@ export default function EditorPage() {
 
         try {
             let uploadBlob: Blob;
-            const uploadName = (title.trim() || file.name).replace(/[/\\?%*:|"<>]/g, '-');
+            const uploadName = title.trim() || file.name;
 
             if (file.isFolder && file.files && file.files.length > 0) {
                 setStatusMessage('Generating ZIP on the fly...');
@@ -298,58 +301,37 @@ export default function EditorPage() {
 
             // Stream to tus server
             await new Promise<string>((resolve, reject) => {
-                // var upload = new tus.Upload(uploadBlob, {
-                //     endpoint: '/api/upload',
-                //     retryDelays: [0, 3000, 5000, 10000, 20000],
-                //     metadata: {
-                //         filename: file.name,
-                //         // filetype: file.type,
-                //     },
-                //     onError: function (error) {
-                //         console.log('Failed because: ' + error);
-                //     },
-                //     onProgress: function (bytesUploaded, bytesTotal) {
-                //         var percentage = ((bytesUploaded / bytesTotal) * 100).toFixed(2);
-                //         console.log(bytesUploaded, bytesTotal, percentage + '%');
-                //     },
-                //     onSuccess: function () {
-                //         console.log("test")
-                //         // console.log('Download %s from %s', upload.file.name, upload.url);
-                //     },
-                // });
-                //
-                // // Check if there are any previous uploads to continue.
-                // upload.findPreviousUploads().then(function (previousUploads) {
-                //     // Found previous uploads so we select the first one.
-                //     if (previousUploads.length) {
-                //         upload.resumeFromPreviousUpload(previousUploads[0]!);
-                //     }
-                //
-                //     // Start the upload
-                //     upload.start();
-                // });
+                const exp = EXPIRY_OPTIONS[expiry]!;
+
+                let pasteId: string;
+                let pasteToken: string;
 
                 const upload = new tus.Upload(uploadBlob, {
                     endpoint: `${URL}/api/upload`,
                     retryDelays: [0, 1000, 3000, 5000],
-                    chunkSize: 50 * 1024 * 1024, // 5MB chunks
+                    chunkSize: 50 * 1024 * 1024,
                     metadata: {
-                        filename: uploadName,
-                        filetype: uploadBlob.type || 'application/octet-stream',
-                        expiry,
-                        oneTime: String(oneTime),
-                        encrypted: String(encrypt),
-                        password,
+                        json: JSON.stringify({
+                            filename: uploadName,
+                            filetype: uploadBlob.type || 'application/octet-stream',
+                            expiry: exp == -1 ? -1 : Date.now() + exp * 1000,
+                            oneTime: oneTime,
+                            password: !encrypt ? '' : (password ?? ''),
+                        }),
                     },
                     onError: (error) => {
                         reject(error);
                     },
                     onProgress: (bytesUploaded, bytesTotal) => {
-                        const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(0);
-                        setStatusMessage(`Uploading to server... ${percent}% (${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)})`);
+                        // const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(0);
+                        setStatusMessage(`Uploading to server... ${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)}`);
+                    },
+                    onAfterResponse(_req, res) {
+                        pasteId = res.getHeader('X-Paste-Id') ?? res.getHeader('x-paste-id') ?? '';
+                        pasteToken = res.getHeader('X-Paste-Token') ?? res.getHeader('x-paste-token') ?? '';
                     },
                     onSuccess: () => {
-                        resolve(upload.url ?? '');
+                        router.push(`/${encodeURIComponent(pasteId)}?t=${encodeURIComponent(pasteToken)}`);
                     },
                 });
 
@@ -357,7 +339,6 @@ export default function EditorPage() {
             });
 
             setStatusMessage('Upload complete!');
-            // alert(`Uploaded "${uploadName}" successfully!`);
         } catch (error) {
             console.error('Upload error:', error);
             alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);

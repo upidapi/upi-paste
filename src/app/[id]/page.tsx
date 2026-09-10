@@ -76,7 +76,9 @@ export default function PastePage() {
     const id = params?.id as string;
 
     const [copied, setCopied] = useState(false);
-
+    
+    // TODO: implement 
+    
     // Initial paste data state
     const [paste, setPaste] = useState({
         id: id || 'test-paste',
