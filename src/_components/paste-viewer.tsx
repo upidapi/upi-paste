@@ -66,7 +66,7 @@ export default function PasteViewer({
                     Folders cannot be previewed or edited
                 </p>
                 <p className="text-xs text-[#6e7681] mt-1">
-                    Packaged as ZIP archive ({formatSize(totalSize)})
+                    Packaged as ZIP archive
                 </p>
             </div>
         );
@@ -79,7 +79,7 @@ export default function PasteViewer({
                 <AlertTriangle size={36} className="text-cyan-400/80" />
                 <p className="text-[#c9d1d9] font-semibold text-sm mt-3">{fileName}</p>
                 <p className="text-xs text-[#6e7681] mt-1 mb-4">
-                    Binary file detected ({formatSize(totalSize!)}).
+                    Binary file detected ({formatSize(totalSize)}).
                 </p>
                 {onRevealAnyway && (
                     <button

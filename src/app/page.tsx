@@ -2,18 +2,24 @@
 
 import React, { useState, useMemo, useRef } from 'react';
 import { FileUp, FolderUp, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
+import * as tus from 'tus-js-client';
+import { downloadZip } from 'client-zip';
+
 import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
 import { formatSize, countLines } from '~/lib/utils';
 import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES } from '~/lib/const';
+
+const URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001';
 
 async function isBinaryFile(blob: Blob): Promise<boolean> {
     const slice = blob.slice(0, 1024 * 1024);
     const buffer = new Uint8Array(await slice.arrayBuffer());
     let bogusControlChars = 0;
 
-    for (let i = 0; i < buffer.length; i++) {
-        const byte = buffer[i]!;
+    for (const byte of buffer) {
+        // for (let i = 0; i < buffer.length; i++) {
+        // const byte = buffer[i]!;
         if (byte === 0) return true;
         if (byte < 7 || (byte > 14 && byte < 32)) {
             bogusControlChars++;
@@ -56,7 +62,7 @@ interface SingleFile {
     isBinary: boolean;
     isTruncated?: boolean;
     isFolder?: boolean;
-    files?: File[]; // Holds raw File references for deferred streaming
+    files?: File[];
     blob?: Blob;
     size: number;
 }
@@ -73,7 +79,7 @@ export default function EditorPage() {
 
     const [title, setTitle] = useState('');
     const [expiry, setExpiry] = useState('1 month');
-    const [burnAfterReading, setBurnAfterReading] = useState(false);
+    const [oneTime, setOneTime] = useState(false);
     const [encrypt, setEncrypt] = useState(false);
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -129,12 +135,11 @@ export default function EditorPage() {
         setIsProcessing(false);
     };
 
-    // Instant: Does not read or compress files into memory
     const handleFolderUpload = (rawFiles: FileList) => {
         const filesArray = Array.from(rawFiles);
         if (filesArray.length === 0) return;
 
-        const folderName = filesArray[0]!.webkitRelativePath.split('/')[0] || 'archive';
+        const folderName = filesArray[0]!.webkitRelativePath.split('/')[0] ?? 'archive';
         const totalSize = filesArray.reduce((acc, f) => acc + f.size, 0);
         const zipName = `${folderName}.zip`;
 
@@ -150,22 +155,33 @@ export default function EditorPage() {
         setTitle(zipName);
     };
 
-    // Fast recursive metadata-only scanner (does not read file data into memory)
-    const scanDirectory = async (entry: any, basePath = ''): Promise<File[]> => {
+    // Type guards to narrow FileSystemEntry
+    const isFileEntry = (entry: FileSystemEntry): entry is FileSystemFileEntry => entry.isFile;
+    const isDirectoryEntry = (entry: FileSystemEntry): entry is FileSystemDirectoryEntry => entry.isDirectory;
+
+    const scanDirectory = async (entry: FileSystemEntry, basePath = ''): Promise<File[]> => {
         let files: File[] = [];
         const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
 
-        if (entry.isFile) {
-            const f = await new Promise<File>((resolve, reject) => entry.file(resolve, reject));
-            Object.defineProperty(f, 'webkitRelativePath', {
+        if (isFileEntry(entry)) {
+            const file = await new Promise<File>((resolve, reject) => {
+                entry.file(resolve, reject);
+            });
+
+            Object.defineProperty(file, 'webkitRelativePath', {
                 value: currentPath,
                 writable: true,
             });
-            files.push(f);
-        } else if (entry.isDirectory) {
+
+            files.push(file);
+        } else if (isDirectoryEntry(entry)) {
             const reader = entry.createReader();
-            const readBatch = async (): Promise<any[]> => {
-                const batch: any[] = await new Promise((res, rej) => reader.readEntries(res, rej));
+
+            const readBatch = async (): Promise<FileSystemEntry[]> => {
+                const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+                    reader.readEntries(resolve, reject);
+                });
+
                 if (batch.length > 0) {
                     const rest = await readBatch();
                     return batch.concat(rest);
@@ -174,9 +190,11 @@ export default function EditorPage() {
             };
 
             const entries = await readBatch();
-            const nested = await Promise.all(entries.map((e) => scanDirectory(e, currentPath)));
-            for (const arr of nested) files = files.concat(arr);
+            const nested = await Promise.all(entries.map((childEntry) => scanDirectory(childEntry, currentPath)));
+
+            files = files.concat(nested.flat());
         }
+
         return files;
     };
 
@@ -210,7 +228,7 @@ export default function EditorPage() {
             setIsProcessing(false);
         } else {
             const droppedFile = e.dataTransfer.files[0];
-            if (droppedFile) handleSingleFile(droppedFile);
+            if (droppedFile) await handleSingleFile(droppedFile);
         }
     };
 
@@ -237,24 +255,116 @@ export default function EditorPage() {
         }
     };
 
+    /**
+     * Handler to zip folders on the fly and stream the upload via TUS
+     */
     const handlePaste = async () => {
         if (isOverUploadLimit) return;
+        // you can have an empty password, it will just unlock instantly
+        // if (encrypt && !password) {
+        //     alert('Please enter a password for encryption.');
+        //     return;
+        // }
 
-        if (file.isFolder && file.files) {
-            console.log(`Ready to stream/zip ${file.files.length} files via tus`);
-            // Stream files using tus or a streaming ZIP writer here on paste click
+        setIsProcessing(true);
+        setStatusMessage('Preparing upload...');
+
+        try {
+            let uploadBlob: Blob;
+            const uploadName = (title.trim() || file.name).replace(/[/\\?%*:|"<>]/g, '-');
+
+            if (file.isFolder && file.files && file.files.length > 0) {
+                setStatusMessage('Generating ZIP on the fly...');
+
+                // Form an iterable of files keeping relative paths intact
+                const filesToZip = file.files.map((f) => ({
+                    name: f.webkitRelativePath || f.name,
+                    input: f,
+                    lastModified: new Date(f.lastModified),
+                }));
+
+                // downloadZip streams files sequentially without inflating uncompressed payload into RAM
+                const zipResponse = downloadZip(filesToZip);
+                uploadBlob = await zipResponse.blob();
+            } else if (file.isText) {
+                // If it's pure text or edited content
+                uploadBlob = new Blob([file.content], { type: 'text/plain;charset=utf-8' });
+            } else if (file.blob) {
+                // Regular single binary file
+                uploadBlob = file.blob;
+            } else {
+                throw new Error('No file payload found.');
+            }
+
+            // Stream to tus server
+            await new Promise<string>((resolve, reject) => {
+                // var upload = new tus.Upload(uploadBlob, {
+                //     endpoint: '/api/upload',
+                //     retryDelays: [0, 3000, 5000, 10000, 20000],
+                //     metadata: {
+                //         filename: file.name,
+                //         // filetype: file.type,
+                //     },
+                //     onError: function (error) {
+                //         console.log('Failed because: ' + error);
+                //     },
+                //     onProgress: function (bytesUploaded, bytesTotal) {
+                //         var percentage = ((bytesUploaded / bytesTotal) * 100).toFixed(2);
+                //         console.log(bytesUploaded, bytesTotal, percentage + '%');
+                //     },
+                //     onSuccess: function () {
+                //         console.log("test")
+                //         // console.log('Download %s from %s', upload.file.name, upload.url);
+                //     },
+                // });
+                //
+                // // Check if there are any previous uploads to continue.
+                // upload.findPreviousUploads().then(function (previousUploads) {
+                //     // Found previous uploads so we select the first one.
+                //     if (previousUploads.length) {
+                //         upload.resumeFromPreviousUpload(previousUploads[0]!);
+                //     }
+                //
+                //     // Start the upload
+                //     upload.start();
+                // });
+
+                const upload = new tus.Upload(uploadBlob, {
+                    endpoint: `${URL}/api/upload`,
+                    retryDelays: [0, 1000, 3000, 5000],
+                    chunkSize: 50 * 1024 * 1024, // 5MB chunks
+                    metadata: {
+                        filename: uploadName,
+                        filetype: uploadBlob.type || 'application/octet-stream',
+                        expiry,
+                        oneTime: String(oneTime),
+                        encrypted: String(encrypt),
+                        password,
+                    },
+                    onError: (error) => {
+                        reject(error);
+                    },
+                    onProgress: (bytesUploaded, bytesTotal) => {
+                        const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(0);
+                        setStatusMessage(`Uploading to server... ${percent}% (${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)})`);
+                    },
+                    onSuccess: () => {
+                        resolve(upload.url ?? '');
+                    },
+                });
+
+                upload.start();
+            });
+
+            setStatusMessage('Upload complete!');
+            // alert(`Uploaded "${uploadName}" successfully!`);
+        } catch (error) {
+            console.error('Upload error:', error);
+            alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsProcessing(false);
+            setStatusMessage('');
         }
-
-        console.log({
-            title: title || file.name,
-            expiry,
-            burnAfterReading,
-            encrypted: encrypt,
-            password: encrypt ? password : null,
-            file,
-        });
-
-        alert(`Created paste "${title || file.name}"!`);
     };
 
     return (
@@ -272,15 +382,15 @@ export default function EditorPage() {
                 type="file"
                 ref={fileInputRef}
                 className="hidden"
-                onChange={(e) => {
-                    if (e.target.files?.[0]) handleSingleFile(e.target.files[0]);
+                onChange={async (e) => {
+                    if (e.target.files?.[0]) await handleSingleFile(e.target.files[0]);
                     e.target.value = '';
                 }}
             />
             <input
                 type="file"
                 ref={folderInputRef}
-                {...({ webkitdirectory: '', directory: '' } as any)}
+                {...{ webkitdirectory: '', directory: '' }}
                 multiple
                 className="hidden"
                 onChange={(e) => {
@@ -312,7 +422,7 @@ export default function EditorPage() {
                         isBinary={!file.isText || file.isBinary}
                         isTruncated={file.isTruncated}
                         totalSize={stats.bytes}
-                        isFolder={file.isFolder!}
+                        isFolder={file.isFolder}
                         mode={'edit'}
                         onRevealAnyway={handleEditAnyway}
                     />
@@ -383,12 +493,10 @@ export default function EditorPage() {
                                 </div>
                                 <button
                                     type="button"
-                                    onClick={() => setBurnAfterReading(!burnAfterReading)}
-                                    className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${burnAfterReading ? 'bg-cyan-500' : 'bg-[#21262d]'}`}
+                                    onClick={() => setOneTime(!oneTime)}
+                                    className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${oneTime ? 'bg-cyan-500' : 'bg-[#21262d]'}`}
                                 >
-                                    <div
-                                        className={`w-4 h-4 rounded-full bg-black transition-transform ${burnAfterReading ? 'translate-x-4' : 'translate-x-0'}`}
-                                    />
+                                    <div className={`w-4 h-4 rounded-full bg-black transition-transform ${oneTime ? 'translate-x-4' : 'translate-x-0'}`} />
                                 </button>
                             </div>
 

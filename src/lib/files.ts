@@ -42,7 +42,7 @@ export function getPasteInfo(id: string) {
     const metaPath = filePath + '.json';
 
     try {
-        const metadata: PasteMetadata = JSON.parse(readFileSync(metaPath).toString());
+        const metadata = JSON.parse(readFileSync(metaPath).toString()) as unknown as PasteMetadata;
         return {
             exists: true as const,
             filePath,

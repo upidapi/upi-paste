@@ -3,6 +3,7 @@ import { unlink } from 'fs/promises';
 import { NextResponse, type NextRequest } from 'next/server';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import { getPasteInfo, initPaste } from '~/lib/files';
 import { generateToken, verifyToken } from '~/lib/token';
 
@@ -27,8 +28,7 @@ export async function PUT(
 
     // stream the file to disk
     const fileWriteStream = createWriteStream(filePath);
-    // @ts-expect-error
-    const nodeReadable = Readable.fromWeb(req.body);
+    const nodeReadable = Readable.fromWeb(req.body as unknown as NodeReadableStream);
     await pipeline(nodeReadable, fileWriteStream);
 
     const URL = 'https://test.com';
@@ -61,13 +61,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id?:
     const webStream = Readable.toWeb(nodeStream);
 
     if (isOneTime) {
-        nodeStream.on('close', async () => {
-            try {
-                await unlink(filePath);
-                await unlink(filePath + '.json');
-            } catch (err) {
-                console.error('Failed to delete file', err);
-            }
+        nodeStream.on('close', () => {
+            void (async () => {
+                try {
+                    await unlink(filePath);
+                    await unlink(filePath + '.json');
+                } catch (err) {
+                    console.error('Failed to delete file', err);
+                }
+            })();
         });
     }
 

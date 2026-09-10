@@ -5,16 +5,22 @@ const server = new Server({
     // `path` needs to match the route declared by the next file router
     // ie /api/upload
     path: '/api/upload',
-    datastore: new FileStore({ directory: './files' }),
+    datastore: new FileStore({ directory: './data' }),
 
-    onUploadCreate: async (req, upload) => {
-        return {};
-    },
+    // onUploadCreate: async (req, upload) => {
+    //     return {};
+    // },
 });
 
-export const GET = server.handleWeb;
-export const POST = server.handleWeb;
-export const PATCH = server.handleWeb;
-export const DELETE = server.handleWeb;
-export const OPTIONS = server.handleWeb;
-export const HEAD = server.handleWeb;
+// required to not strip the "this"
+// can also use server.handleWeb.bind(server);
+function handle(req: Request) {
+    return server.handleWeb(req);
+}
+
+export const GET = handle;
+export const POST = handle;
+export const PATCH = handle;
+export const DELETE = handle;
+export const OPTIONS = handle;
+export const HEAD = handle;

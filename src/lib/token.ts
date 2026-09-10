@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const SECRET_KEY = process.env.TOKEN_SECRET || 'your-secret-key';
+const SECRET_KEY = process.env.TOKEN_SECRET ?? 'your-secret-key';
 
 
 export function generateId() {

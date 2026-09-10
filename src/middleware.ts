@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 export function middleware(req: NextRequest) {
-    const userAgent = req.headers.get('user-agent')?.toLowerCase() || '';
-    const accept = req.headers.get('accept')?.toLowerCase() || '';
+    const userAgent = req.headers.get('user-agent')?.toLowerCase() ?? '';
+    const accept = req.headers.get('accept')?.toLowerCase() ?? '';
 
     const cliTools = ['curl', 'wget', 'httpie', 'fetch'];
     const isCliAgent = cliTools.some((tool) => userAgent.includes(tool));
@@ -21,6 +21,16 @@ export function middleware(req: NextRequest) {
 }
 
 // Apply to all pages except internal Next.js assets & static files
+// middleware.ts
 export const config = {
-    matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+    matcher: [
+        /*
+         * Match all request paths EXCEPT:
+         * - api/upload (and any subpaths like /api/upload/123)
+         * - _next/static (static files)
+         * - _next/image (image optimization files)
+         * - favicon.ico
+         */
+        '/((?!api/upload|_next/static|_next/image|favicon.ico).*)',
+    ],
 };

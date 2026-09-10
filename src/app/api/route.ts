@@ -1,5 +1,3 @@
-import type { NextRequest } from 'next/server';
-
 export { PUT } from './[id]/route';
 
 const USAGE_NOTE = `
