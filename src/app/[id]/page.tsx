@@ -60,8 +60,6 @@
 // }
 //
 
-
-
 'use client';
 
 import React, { useState } from 'react';
@@ -76,29 +74,45 @@ export default function PastePage() {
     const id = params?.id as string;
 
     const [copied, setCopied] = useState(false);
-    
-    // TODO: implement 
-    
-    // Initial paste data state
+
+    // TODO: implement
+
+    const [password, setPassword] = useState<string | null>(null);
+
+    const [mPaste, setMPaste] = useState({
+        name: '',
+        expires: -1,
+    });
     const [paste, setPaste] = useState({
-        id: id || 'test-paste',
-        name: 'asdfasdfjksafdjkl;fasdkj',
-        content: 'asdfasdfjksafdjkl;fasdkj\n',
+        preview: '',
         isBinary: false,
         isTruncated: false,
-        size: 26,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 29 + 1000 * 60 * 60 * 23 + 1000 * 60 * 59 + 59000),
+        size: 0,
+    })
+
+    fetch(`/api/${id}/metadata`).then(async (res) => {
+        if (res.status == 400 && (await res.text()) == 'Wrong password') {
+            setPassword('');
+        }
+
+        if (!res.ok) return 0; // TODO: handle error
+
+        const j = await res.json();
+
+        setPaste({
+            name: j.name,
+        });
     });
 
     const handleCopy = async () => {
-        if (!paste.content) return;
-        await navigator.clipboard.writeText(paste.content);
+        if (!paste.preview) return;
+        await navigator.clipboard.writeText(paste.preview);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
 
     const handleDownload = () => {
-        const blob = new Blob([paste.content], { type: 'text/plain;charset=utf-8' });
+        const blob = new Blob([paste.preview], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -154,7 +168,7 @@ export default function PastePage() {
 
             <div className="flex-1 flex flex-col overflow-hidden">
                 <PasteViewer
-                    value={paste.content}
+                    value={paste.preview}
                     fileName={paste.name}
                     isBinary={paste.isBinary}
                     isTruncated={paste.isTruncated}

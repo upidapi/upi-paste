@@ -50,9 +50,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id?:
     const pasteInfo = getPasteInfo(id);
     if (!pasteInfo.exists) return new Response('', { status: 404 });
 
-    const { filePath, fileName, psw, isOneTime } = pasteInfo;
+    const { filePath, filename, password, oneTime } = pasteInfo;
 
-    if (psw != (sParams.get('psw') ?? '')) {
+    if (password != (sParams.get('psw') ?? '')) {
         return new Response('wrong password', { status: 400 });
     }
 
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id?:
     const nodeStream = createReadStream(filePath);
     const webStream = Readable.toWeb(nodeStream);
 
-    if (isOneTime) {
+    if (oneTime) {
         nodeStream.on('close', () => {
             void (async () => {
                 try {
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id?:
         status: 200,
         headers: {
             // 'Content-Type': 'video/mp4', // or 'application/octet-stream'
-            'Content-Disposition': `attachment; filename="${fileName}"`,
+            'Content-Disposition': `attachment; filename="${filename}"`,
             'Content-Length': stat.size.toString(),
         },
     });

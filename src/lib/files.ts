@@ -18,6 +18,7 @@ export const PasteMetadataSchema = z.object({
     expiry: z.number(),
     oneTime: z.boolean(),
     password: z.string(),
+    state: z.enum(["valid", "preview", "burned"])
 });
 export type PasteMetadata = z.infer<typeof PasteMetadataSchema>;
 

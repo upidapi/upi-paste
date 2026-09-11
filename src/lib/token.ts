@@ -36,6 +36,17 @@ export function createUniqueId(
     }
 }
 
+export function timingSafeEqual(a: string, b: string) {
+    const tokenBuffer = Buffer.from(a);
+    const expectedBuffer = Buffer.from(b);
+
+    if (tokenBuffer.length !== expectedBuffer.length) {
+        return false;
+    }
+
+    return crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
+}
+
 export function generateToken(id: string): string {
     return crypto.createHmac('sha256', SECRET_KEY).update(id).digest('hex').slice(0, 24);
 }
@@ -43,13 +54,5 @@ export function generateToken(id: string): string {
 export function verifyToken(id: string, token: string): boolean {
     const expectedToken = generateToken(id);
 
-    // prevent timing attacks
-    const tokenBuffer = Buffer.from(token);
-    const expectedBuffer = Buffer.from(expectedToken);
-
-    if (tokenBuffer.length !== expectedBuffer.length) {
-        return false;
-    }
-
-    return crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
+    return timingSafeEqual(token, expectedToken)
 }
