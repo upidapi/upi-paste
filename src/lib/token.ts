@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 
+// TODO: fix
 const SECRET_KEY = process.env.TOKEN_SECRET ?? 'your-secret-key';
 
 const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -47,12 +48,12 @@ export function timingSafeEqual(a: string, b: string) {
     return crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
 }
 
-export function generateToken(id: string): string {
-    return crypto.createHmac('sha256', SECRET_KEY).update(id).digest('hex').slice(0, 24);
+export function generateToken(key: string, id: string): string {
+    return crypto.createHmac('sha256', SECRET_KEY).update(`${key}:${id}`).digest('hex').slice(0, 24);
 }
 
-export function verifyToken(id: string, token: string): boolean {
-    const expectedToken = generateToken(id);
+export function verifyToken(key: string, id: string, token: string): boolean {
+    const expectedToken = generateToken(key, id);
 
-    return timingSafeEqual(token, expectedToken)
+    return timingSafeEqual(token, expectedToken);
 }

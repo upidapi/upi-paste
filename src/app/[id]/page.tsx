@@ -1,108 +1,80 @@
-// app/[id]/page.tsx (or your dynamic route folder)
-
-// import { verifyToken } from '~/lib/token';
-//
-// interface PageProps {
-//     params: Promise<{ id: string }>;
-//     searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-// }
-//
-// function idExists(id: string) {
-//     // TODO: implement
-//     return true;
-// }
-//
-// function getFileInfo(id: string) {
-//     return {
-//         exists: true,
-//         fileName: 'file.txt',
-//         fileSize: 1000000, // in bytes
-//     };
-// }
-//
-// export default async function Page(props: PageProps) {
-//     const id = (await props.params).id;
-//     const searchParams = await props.searchParams;
-//
-//     const t = searchParams.t;
-//     const token = Array.isArray(t) ? t[0] : (t ?? '');
-//
-//     const { exists, fileName, fileSize } = getFileInfo(id!);
-//     if (!exists) {
-//         return (
-//             <div>
-//                 <span>File not found</span>
-//             </div>
-//         );
-//     }
-//
-//     const validToken = token && verifyToken(id, token);
-//     const invalidToken = token && !verifyToken(id, token);
-//
-//     const handleDownload = () => {
-//         if (!validToken) {
-//             alert('invalid token');
-//         } else {
-//             window.location.href = `/api/${encodeURIComponent(token)}`;
-//         }
-//     };
-//
-//     return (
-//         <div>
-//             <h1>
-//                 {fileName}: {formatSize(fileSize)}
-//             </h1>
-//             <p>{validToken ? 'You own this' : 'You dont own this'}</p>
-//             {invalidToken && <p>invalid token</p>}
-//             <button
-//         </div>
-//     );
-// }
-//
-
 'use client';
 
 import React, { useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Trash2, Download, Copy, Check } from 'lucide-react';
+import { Trash2, Download, Copy, Check, Lock, AlertTriangle, KeyRound, ArrowRight } from 'lucide-react';
 import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
+import * as z from 'zod';
+import { useQuery } from '@tanstack/react-query';
+
+const PasteSchema = z.object({
+    filename: z.string(),
+    filetype: z.string(),
+    oneTime: z.boolean(),
+    expiry: z.number(),
+    size: z.number(),
+});
 
 export default function PastePage() {
     const router = useRouter();
     const params = useParams();
-    const id = params?.id as string;
+    const id = params.id! as string;
 
     const [copied, setCopied] = useState(false);
 
-    // TODO: implement
+    // Password & Input States
+    const [passwordInput, setPasswordInput] = useState('');
+    const [submittedPassword, setSubmittedPassword] = useState('');
 
-    const [password, setPassword] = useState<string | null>(null);
+    // One-time confirmation gate
+    const [oneTimeConfirmed, setOneTimeConfirmed] = useState(false);
 
-    const [mPaste, setMPaste] = useState({
-        name: '',
-        expires: -1,
-    });
     const [paste, setPaste] = useState({
+        id: '',
+        name: '',
         preview: '',
+        previewToken: '',
         isBinary: false,
         isTruncated: false,
-        size: 0,
-    })
-
-    fetch(`/api/${id}/metadata`).then(async (res) => {
-        if (res.status == 400 && (await res.text()) == 'Wrong password') {
-            setPassword('');
-        }
-
-        if (!res.ok) return 0; // TODO: handle error
-
-        const j = await res.json();
-
-        setPaste({
-            name: j.name,
-        });
     });
+
+    const { data, isLoading, isFetching, error } = useQuery({
+        queryKey: ['resource', id, submittedPassword],
+        queryFn: async () => {
+            const searchParams = new URLSearchParams({ p: submittedPassword });
+            const res = await fetch(`/api/resource/${id}?${searchParams.toString()}`);
+
+            if (!res.ok) {
+                throw new Error(String(res.status));
+            }
+
+            return {
+                password: submittedPassword,
+                ...PasteSchema.parse(await res.json()),
+            };
+        },
+        retry: false,
+    });
+
+    // Clean, semantic status checks:
+    const isLocked = error?.message === '401' || error?.message === '403';
+    const isPasswordError = error?.message === '403';
+
+    const mPaste = data ?? {
+        filename: '',
+        filetype: '',
+        oneTime: true,
+        expiry: -1,
+        size: -1,
+        password: '',
+    };
+
+    const handlePasswordSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!passwordInput || isFetching) return;
+        setSubmittedPassword(passwordInput); // Triggers the query!
+    };
 
     const handleCopy = async () => {
         if (!paste.preview) return;
@@ -116,7 +88,7 @@ export default function PastePage() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = paste.name || `${paste.id}.txt`;
+        a.download = paste.name || `${paste.id || id}.txt`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -126,7 +98,7 @@ export default function PastePage() {
     const handleDelete = async () => {
         if (!confirm('Are you sure you want to delete this paste?')) return;
         try {
-            await fetch(`/api/${paste.id}`, { method: 'DELETE' });
+            await fetch(`/api/${id}`, { method: 'DELETE' });
         } catch {
             // Callback stub
         }
@@ -139,7 +111,7 @@ export default function PastePage() {
 
     return (
         <div className="flex flex-col h-screen w-screen bg-[#0b0e14] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm">
-            <TopBar showExpiry={Boolean(paste.expiresAt)} expiresAt={paste.expiresAt}>
+            <TopBar showExpiry={mPaste.expiry !== -1} expiresAt={mPaste.expiry}>
                 <button
                     type="button"
                     onClick={handleDelete}
@@ -152,7 +124,8 @@ export default function PastePage() {
                     type="button"
                     onClick={handleDownload}
                     title="Download"
-                    className="p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors"
+                    disabled={isLocked || isLoading}
+                    className="p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none"
                 >
                     <Download size={16} />
                 </button>
@@ -160,22 +133,79 @@ export default function PastePage() {
                     type="button"
                     onClick={handleCopy}
                     title="Copy to clipboard"
-                    className="p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors"
+                    disabled={isLocked || isLoading}
+                    className="p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none"
                 >
                     {copied ? <Check size={16} className="text-cyan-400" /> : <Copy size={16} />}
                 </button>
             </TopBar>
 
-            <div className="flex-1 flex flex-col overflow-hidden">
-                <PasteViewer
-                    value={paste.preview}
-                    fileName={paste.name}
-                    isBinary={paste.isBinary}
-                    isTruncated={paste.isTruncated}
-                    totalSize={paste.size}
-                    mode="view"
-                    onRevealAnyway={handleViewAnyway}
-                />
+            <div className="flex-1 flex flex-col overflow-hidden relative">
+                {/* 1. PASSWORD REQUIRED PROMPT */}
+                {isLocked ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto select-none font-mono">
+                        <div className="w-12 h-12 rounded-full bg-cyan-400/10 border border-cyan-400/20 flex items-center justify-center mb-3">
+                            <Lock size={22} className="text-cyan-400" />
+                        </div>
+                        <h2 className="text-[#c9d1d9] font-semibold text-sm">Password Protected</h2>
+                        <p className="text-xs text-[#6e7681] mt-1 mb-5">Enter the password to decrypt and view this paste.</p>
+
+                        <form onSubmit={handlePasswordSubmit} className="w-full flex flex-col gap-2">
+                            <div className="relative">
+                                <KeyRound size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6e7681]" />
+                                <input
+                                    type="password"
+                                    value={passwordInput}
+                                    onChange={(e) => setPasswordInput(e.target.value)}
+                                    placeholder="Enter password..."
+                                    autoFocus
+                                    className={`w-full bg-[#161b22] border text-[#c9d1d9] text-xs pl-8 pr-3 py-2 outline-none transition-colors placeholder-[#444c56] ${
+                                        isPasswordError ? 'border-rose-500 focus:border-rose-400' : 'border-[#30363d] focus:border-cyan-400'
+                                    }`}
+                                />
+                            </div>
+
+                            {isPasswordError && <p className="text-[11px] text-rose-400 text-left">Incorrect password. Please try again.</p>}
+
+                            <button
+                                type="submit"
+                                disabled={isFetching || !passwordInput}
+                                className="flex items-center justify-center gap-1.5 w-full py-2 border border-[#30363d] text-cyan-400 hover:border-cyan-400 hover:bg-cyan-400/5 text-xs transition-colors font-medium active:scale-95 disabled:opacity-40 disabled:pointer-events-none mt-1"
+                            >
+                                <span>{isFetching ? 'Unlocking...' : 'Unlock'}</span>
+                                <ArrowRight size={13} />
+                            </button>
+                        </form>
+                    </div>
+                ) : mPaste.oneTime && !oneTimeConfirmed ? (
+                    /* 2. ONE-TIME BURN GATE */
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto select-none font-mono">
+                        <AlertTriangle size={36} className="text-rose-400 mb-3" />
+                        <h2 className="text-[#c9d1d9] font-semibold text-sm">Self-Destructing Paste</h2>
+                        <p className="text-xs text-[#6e7681] mt-1 mb-5">
+                            This paste will be immediately destroyed after being revealed. Ensure you are ready to view or save it.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setOneTimeConfirmed(true)}
+                            className="px-4 py-2 border border-rose-500/50 text-rose-400 hover:border-rose-400 hover:bg-rose-500/10 text-xs transition-colors font-medium active:scale-95"
+                        >
+                            Reveal and burn
+                        </button>
+                    </div>
+                ) : (
+                    /* 3. NORMAL VIEWER */
+                    <PasteViewer
+                        value={paste.preview}
+                        fileName={mPaste.filename}
+                        isBinary={paste.isBinary}
+                        isTruncated={paste.isTruncated}
+                        totalSize={mPaste.size}
+                        mode="view"
+                        placeholder=""
+                        onRevealAnyway={handleViewAnyway}
+                    />
+                )}
             </div>
         </div>
     );

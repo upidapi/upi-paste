@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@t3-oss/env-nextjs": "^0.12.0",
+    "@tanstack/react-query": "^5.102.8",
     "@tus/file-store": "^2.1.1",
     "@tus/server": "^2.4.5",
     "client-zip": "^2.5.0",

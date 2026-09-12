@@ -45,7 +45,7 @@ const server = new Server({
             headers: {
                 'Access-Control-Expose-Headers': 'X-Paste-Id, X-Paste-Token',
                 'X-Paste-Id': id,
-                'X-Paste-Token': generateToken(id),
+                'X-Paste-Token': generateToken("owner", id),
             },
         };
         // return {

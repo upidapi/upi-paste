@@ -23,4 +23,10 @@ curl "https://test.com/<id>"
 curl -X DELETE "https://test.com/<id>?t=<token>"
 ```
 
+# docs
+params:
+- p: password
+- h: preview token
+- t: owner token
+
 

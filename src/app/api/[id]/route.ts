@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import { getPasteInfo, initPaste } from '~/lib/files';
-import { generateToken, verifyToken } from '~/lib/token';
+import { generateToken, timingSafeEqual, verifyToken } from '~/lib/token';
 
 // on put the [id] is the filename
 export async function PUT(
@@ -20,9 +20,14 @@ export async function PUT(
 ) {
     const sParams = req.nextUrl.searchParams;
     const p = await params;
+
+    if (!p.id) {
+        return new Response('Missing id', { status: 400 });
+    }
+
     const { id, filePath } = initPaste({
-        isOneTime: sParams.has('one-time'),
-        psw: sParams.get('psw') ?? '',
+        oneTime: sParams.has('one-time'),
+        password: sParams.get('psw') ?? '',
         filename: p.id, // (p.id ?? [])[0],
     });
 
@@ -32,7 +37,7 @@ export async function PUT(
     await pipeline(nodeReadable, fileWriteStream);
 
     const URL = 'https://test.com';
-    return new Response(`${URL}/${id}?t=${generateToken(id)}`, {
+    return new Response(`${URL}/${id}?t=${generateToken("owner", id)}`, {
         status: 200,
         headers: {
             'Content-Type': 'text/plain; charset=utf-8',
@@ -40,32 +45,43 @@ export async function PUT(
     });
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id?: string }> }) {
-    const sParams = req.nextUrl.searchParams;
-    // const token = sParams.get('t');
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const id = (await params).id;
+    const sParams = req.nextUrl.searchParams;
 
-    if (id === undefined) return new Response('missing id', { status: 400 });
+    if (id === undefined) return new Response('Missing id', { status: 400 });
 
-    const pasteInfo = getPasteInfo(id);
-    if (!pasteInfo.exists) return new Response('', { status: 404 });
+    const pasteInfo = getPasteInfo({
+        id,
+        password: sParams.get('p'),
+    });
 
-    const { filePath, filename, password, oneTime } = pasteInfo;
+    if (!pasteInfo.ok) return pasteInfo.res;
 
-    if (password != (sParams.get('psw') ?? '')) {
-        return new Response('wrong password', { status: 400 });
+    const paste = pasteInfo.paste;
+
+    // if user has previewed, then force them to provide the token
+    if (paste.previewedAt != -1) {
+        const previewToken = sParams.get('h');
+        if (previewToken == null) {
+            return new Response('Missing preview token', { status: 403 });
+        }
+        if (verifyToken("preview", paste.id, previewToken)) {
+            return new Response('Wrong preview token', { status: 403 });
+        }
     }
 
-    const stat = statSync(filePath);
-    const nodeStream = createReadStream(filePath);
+    const stat = statSync(paste.filePath);
+    const nodeStream = createReadStream(paste.filePath);
     const webStream = Readable.toWeb(nodeStream);
 
-    if (oneTime) {
+    // TODO: call delFile instead
+    if (paste.oneTime) {
         nodeStream.on('close', () => {
             void (async () => {
                 try {
-                    await unlink(filePath);
-                    await unlink(filePath + '.json');
+                    await unlink(paste.filePath);
+                    await unlink(paste.filePath + '.json');
                 } catch (err) {
                     console.error('Failed to delete file', err);
                 }
@@ -76,8 +92,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id?:
     return new NextResponse(webStream as ReadableStream, {
         status: 200,
         headers: {
-            // 'Content-Type': 'video/mp4', // or 'application/octet-stream'
-            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Type': paste.filetype,
+            'Content-Disposition': `attachment; filename="${paste.filename}"`,
             'Content-Length': stat.size.toString(),
         },
     });

@@ -12,7 +12,6 @@ export function formatSize(bytes: number) {
     }
 }
 
-
 export function countLines(str: string): number {
     if (!str) return 1;
     let count = 1;
