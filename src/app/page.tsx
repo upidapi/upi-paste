@@ -3,31 +3,15 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { FileUp, FolderUp, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import * as tus from 'tus-js-client';
-import { downloadZip } from 'client-zip';
+import { downloadZip, predictLength } from 'client-zip';
 
 import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
-import { formatSize, countLines } from '~/lib/utils';
+import { formatSize, countLines, isProbBinary } from '~/lib/utils';
 import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES } from '~/lib/const';
 import { useRouter } from 'next/navigation';
 
 const URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-
-async function isBinaryFile(blob: Blob): Promise<boolean> {
-    const slice = blob.slice(0, 1024 * 1024);
-    const buffer = new Uint8Array(await slice.arrayBuffer());
-    let bogusControlChars = 0;
-
-    for (const byte of buffer) {
-        // for (let i = 0; i < buffer.length; i++) {
-        // const byte = buffer[i]!;
-        if (byte === 0) return true;
-        if (byte < 7 || (byte > 14 && byte < 32)) {
-            bogusControlChars++;
-        }
-    }
-    return buffer.length > 0 && bogusControlChars / buffer.length > 0.05;
-}
 
 async function readFirst(blob: Blob, maxBytes: number): Promise<string> {
     const stream = blob.stream();
@@ -56,6 +40,10 @@ async function readFirst(blob: Blob, maxBytes: number): Promise<string> {
     return text;
 }
 
+interface CustomFile extends File {
+    customRelativePath?: string;
+}
+
 interface SingleFile {
     name: string;
     content: string;
@@ -63,7 +51,7 @@ interface SingleFile {
     isBinary: boolean;
     isTruncated?: boolean;
     isFolder?: boolean;
-    files?: File[];
+    files?: CustomFile[];
     blob?: Blob;
     size: number;
 }
@@ -109,7 +97,13 @@ export default function EditorPage() {
 
         await new Promise((r) => setTimeout(r, 20));
 
-        const isBinary = await isBinaryFile(rawFile);
+        const isBinary = isProbBinary(
+            new Uint8Array(
+                await rawFile
+                    .slice(0, MAX_SAFE_EDIT_BYTES)
+                    .arrayBuffer(),
+            ),
+        );
         const isText = !isBinary && rawFile.size <= MAX_SAFE_EDIT_BYTES;
 
         if (isText) {
@@ -139,7 +133,7 @@ export default function EditorPage() {
     };
 
     const handleFolderUpload = (rawFiles: FileList) => {
-        const filesArray = Array.from(rawFiles);
+        const filesArray = Array.from(rawFiles) as CustomFile[];
         if (filesArray.length === 0) return;
 
         const folderName = filesArray[0]!.webkitRelativePath.split('/')[0] ?? 'archive';
@@ -158,43 +152,48 @@ export default function EditorPage() {
         setTitle(zipName);
     };
 
-    // Type guards to narrow FileSystemEntry
     const isFileEntry = (entry: FileSystemEntry): entry is FileSystemFileEntry => entry.isFile;
     const isDirectoryEntry = (entry: FileSystemEntry): entry is FileSystemDirectoryEntry => entry.isDirectory;
 
-    const scanDirectory = async (entry: FileSystemEntry, basePath = ''): Promise<File[]> => {
-        let files: File[] = [];
+    // Iteratively read directory batches to avoid call-stack overflow on huge directories
+    const readAllEntries = async (dirReader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
+        const entries: FileSystemEntry[] = [];
+        while (true) {
+            const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+                dirReader.readEntries(resolve, reject);
+            });
+            if (!batch || batch.length === 0) break;
+            entries.push(...batch);
+        }
+        return entries;
+    };
+
+    const scanDirectory = async (entry: FileSystemEntry, basePath = ''): Promise<CustomFile[]> => {
+        let files: CustomFile[] = [];
         const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
 
         if (isFileEntry(entry)) {
-            const file = await new Promise<File>((resolve, reject) => {
+            const file = (await new Promise<File>((resolve, reject) => {
                 entry.file(resolve, reject);
-            });
+            })) as CustomFile;
 
-            Object.defineProperty(file, 'webkitRelativePath', {
-                value: currentPath,
-                writable: true,
-            });
+            // Safely store relative path without throwing on non-configurable properties
+            file.customRelativePath = currentPath;
+            try {
+                Object.defineProperty(file, 'webkitRelativePath', {
+                    value: currentPath,
+                    writable: true,
+                    configurable: true,
+                });
+            } catch {
+                // Ignore if read-only in strict browser environments
+            }
 
             files.push(file);
         } else if (isDirectoryEntry(entry)) {
             const reader = entry.createReader();
-
-            const readBatch = async (): Promise<FileSystemEntry[]> => {
-                const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-                    reader.readEntries(resolve, reject);
-                });
-
-                if (batch.length > 0) {
-                    const rest = await readBatch();
-                    return batch.concat(rest);
-                }
-                return [];
-            };
-
-            const entries = await readBatch();
+            const entries = await readAllEntries(reader);
             const nested = await Promise.all(entries.map((childEntry) => scanDirectory(childEntry, currentPath)));
-
             files = files.concat(nested.flat());
         }
 
@@ -258,79 +257,96 @@ export default function EditorPage() {
         }
     };
 
-    /**
-     * Handler to zip folders on the fly and stream the upload via TUS
-     */
+    // Zip folders on the fly and stream directly via TUS
     const handlePaste = async () => {
         if (isOverUploadLimit) return;
-        // you can have an empty password, it will just unlock instantly
-        // if (encrypt && !password) {
-        //     alert('Please enter a password for encryption.');
-        //     return;
-        // }
 
         setIsProcessing(true);
         setStatusMessage('Preparing upload...');
 
         try {
-            let uploadBlob: Blob;
             const uploadName = title.trim() || file.name;
+            const exp = EXPIRY_OPTIONS[expiry]!;
+
+            // Tus supports File, Blob, or a WHATWG stream Reader in browser environments
+            let uploadSource: File | Blob | ReadableStreamDefaultReader<Uint8Array>;
+            let totalUploadSize: number;
+            let fileType: string;
 
             if (file.isFolder && file.files && file.files.length > 0) {
-                setStatusMessage('Generating ZIP on the fly...');
+                setStatusMessage('Initializing ZIP stream...');
 
-                // Form an iterable of files keeping relative paths intact
                 const filesToZip = file.files.map((f) => ({
-                    name: f.webkitRelativePath || f.name,
+                    name: f.customRelativePath ?? f.webkitRelativePath ?? f.name,
                     input: f,
                     lastModified: new Date(f.lastModified),
+                    size: f.size,
                 }));
 
-                // downloadZip streams files sequentially without inflating uncompressed payload into RAM
-                const zipResponse = downloadZip(filesToZip);
-                uploadBlob = await zipResponse.blob();
+                // 1. Predict ZIP length upfront (O(N) filenames/sizes, zero RAM consumed)
+                const predictedZipSize = Number(predictLength(filesToZip));
+
+                // 2. Obtain stream response without materializing into a Blob
+                const zipResponse = downloadZip(filesToZip, { length: predictedZipSize });
+                if (!zipResponse.body) {
+                    throw new Error('ReadableStream is not supported by your browser.');
+                }
+
+                uploadSource = zipResponse.body.getReader();
+                totalUploadSize = predictedZipSize;
+                fileType = 'application/zip';
             } else if (file.isText) {
-                // If it's pure text or edited content
-                uploadBlob = new Blob([file.content], { type: 'text/plain;charset=utf-8' });
+                uploadSource = new Blob([file.content], { type: 'text/plain;charset=utf-8' });
+                totalUploadSize = uploadSource.size;
+                fileType = 'text/plain;charset=utf-8';
             } else if (file.blob) {
-                // Regular single binary file
-                uploadBlob = file.blob;
+                uploadSource = file.blob;
+                totalUploadSize = file.blob.size;
+                fileType = file.blob.type || 'application/octet-stream';
             } else {
                 throw new Error('No file payload found.');
             }
 
-            // Stream to tus server
-            await new Promise<string>((resolve, reject) => {
-                const exp = EXPIRY_OPTIONS[expiry]!;
+            // Upload directly to TUS server
+            await new Promise<void>((resolve, reject) => {
+                let pasteId = '';
+                let pasteToken = '';
 
-                let pasteId: string;
-                let pasteToken: string;
-
-                const upload = new tus.Upload(uploadBlob, {
+                const upload = new tus.Upload(uploadSource, {
                     endpoint: `${URL}/api/upload`,
                     retryDelays: [0, 1000, 3000, 5000],
-                    chunkSize: 50 * 1024 * 1024,
+                    chunkSize: 75 * 1024 * 1024,
+                    uploadSize: totalUploadSize,
+                    storeFingerprintForResuming: false, // Prevents stale local storage fingerprints on streams
+                    removeFingerprintOnSuccess: true,
                     metadata: {
                         json: JSON.stringify({
                             filename: uploadName,
-                            filetype: uploadBlob.type || 'application/octet-stream',
-                            expiry: exp == -1 ? -1 : Date.now() + exp * 1000,
-                            oneTime: oneTime,
+                            filetype: fileType,
+                            expiry: exp === -1 ? -1 : Date.now() + exp * 1000,
+                            oneTime,
                             password: !encrypt ? '' : (password ?? ''),
                         }),
                     },
                     onError: (error) => {
+                        // Cancel stream reader if an unrecoverable failure occurs
+                        if ('cancel' in uploadSource && typeof uploadSource.cancel === 'function') {
+                            uploadSource.cancel().catch(() => ({}));
+                        }
                         reject(error);
                     },
                     onProgress: (bytesUploaded, bytesTotal) => {
-                        // const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(0);
-                        setStatusMessage(`Uploading to server... ${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)}`);
+                        const pct = bytesTotal ? Math.round((bytesUploaded / bytesTotal) * 100) : 0;
+                        setStatusMessage(
+                            `Uploading... ${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)} (${pct}%)`,
+                        );
                     },
                     onAfterResponse(_req, res) {
                         pasteId = res.getHeader('X-Paste-Id') ?? res.getHeader('x-paste-id') ?? '';
                         pasteToken = res.getHeader('X-Paste-Token') ?? res.getHeader('x-paste-token') ?? '';
                     },
                     onSuccess: () => {
+                        resolve();
                         router.push(`/${encodeURIComponent(pasteId)}?t=${encodeURIComponent(pasteToken)}`);
                     },
                 });

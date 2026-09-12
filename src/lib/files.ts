@@ -48,14 +48,14 @@ export function initPaste(params: z.input<typeof PasteMetadataSchema>) {
     const metaPath = filePath + '.json';
 
     const timeStr = new Date().toISOString().replace('T', '_').slice(0, 19);
-
+    
     // save metadata
     writeFileSync(
         metaPath,
         JSON.stringify({
             ...params,
-            filename: params.filename ?? `unamed-${timeStr}.txt`,
-            filetype: params.filetype ?? 'application/octet-stream',
+            filename: params.filename || `unamed-${timeStr}.txt`,
+            filetype: params.filetype || 'application/octet-stream',
         }),
     );
 
@@ -63,7 +63,7 @@ export function initPaste(params: z.input<typeof PasteMetadataSchema>) {
 }
 
 export async function updateMetadata(id: string, metadata: Partial<PasteMetadata>) {
-    const metaPath = path.join(process.cwd(), 'data', id) + '.json';
+    const metaPath = path.join(process.cwd(), 'data', 'paste', id) + '.json';
 
     const res = (await readFile(metaPath)).toString();
     const meta = JSON.parse(res) as unknown as PasteMetadata;
@@ -85,7 +85,7 @@ export async function updateMetadata(id: string, metadata: Partial<PasteMetadata
 // TODO: burn paste 5m after preview
 
 export function getPasteInfo({ id, password }: { id: string; password?: string | null }) {
-    const filePath = path.join(process.cwd(), 'data', id);
+    const filePath = path.join(process.cwd(), 'data', 'paste', id);
     const metaPath = filePath + '.json';
 
     if (!existsSync(metaPath))

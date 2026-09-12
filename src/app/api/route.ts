@@ -1,4 +1,4 @@
-export { PUT } from './[id]/route';
+// export { PUT } from './[id]/route';
 
 const USAGE_NOTE = `
 curl --upload-file ./filename.txt https://test.com

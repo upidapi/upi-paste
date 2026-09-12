@@ -1,6 +1,6 @@
 
 export const MAX_SAFE_EDIT_BYTES = 1 * 1024 * 1024; // 1 MB
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024; // 10 MB
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024; // 10 GB
 
 export const EXPIRY_OPTIONS: Record<string, number> = {
     never: -1,

@@ -17,14 +17,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!pasteInfo.ok) return pasteInfo.res;
 
     const paste = pasteInfo.paste;
+
+    if (paste.previewedAt != -1 && paste.previewedAt < Date.now()) {
+        return new Response('Paste not found', { status: 404 });
+    }
+
+    // Once previewed, you can only download the file with the download token
     if (paste.oneTime) {
         await updateMetadata(paste.id, {
             previewedAt: Date.now(),
         });
     }
 
-    return {
+    return Response.json({
         preview: (await readFirstBytes(paste.filePath, MAX_SAFE_EDIT_BYTES)).toString('base64'),
         previewToken: generateToken('preview', id),
-    };
+    });
 }

@@ -14,6 +14,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!pasteInfo.ok) return pasteInfo.res;
 
     const paste = pasteInfo.paste;
+    
+    // Once previewed, you can only download the file with the download token
+    if (paste.previewedAt != -1 && paste.previewedAt < Date.now()) {
+        return new Response('Paste not found', { status: 404 });
+    }
 
     // bad to leek size/filename/filetype? (if its a one time burn)
     return Response.json({
