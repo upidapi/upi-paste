@@ -29,4 +29,5 @@ params:
 - h: preview token
 - t: owner token
 
-
+# todo
+remove all alerts / popups ("confirm")?

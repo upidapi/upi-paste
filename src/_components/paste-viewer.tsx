@@ -3,33 +3,36 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { countLines, formatSize } from '~/lib/utils';
+import { MAX_SAFE_EDIT_BYTES } from '~/lib/const';
 
 const MAX_LINES = 10_000;
 
 interface PasteViewerProps {
     value: string;
     onChange?: (value: string) => void;
-    fileName?: string;
-    isBinary?: boolean;
-    isTruncated?: boolean;
-    totalSize: number;
-    mode?: 'edit' | 'view';
-    onRevealAnyway?: () => void;
-    placeholder?: string;
+    fileName: string;
     isFolder?: boolean;
+    isBinary: boolean;
+    isTruncated: boolean;
+    acceptedWarning: boolean;
+    onAcceptedWarning: () => void;
+    totalSize: number;
+    mode: 'edit' | 'view';
+    placeholder: string;
 }
 
 export default function PasteViewer({
     value,
-    onChange,
+    onChange = () => ({}),
     fileName,
+    isFolder = false,
     isBinary,
     isTruncated,
+    acceptedWarning, 
+    onAcceptedWarning, 
     totalSize,
-    mode = 'edit',
-    onRevealAnyway,
-    isFolder = false,
-    placeholder = 'paste, type, or drop a file or folder here ...',
+    mode,
+    placeholder,
 }: PasteViewerProps) {
     const [isAtBottom, setIsAtBottom] = useState(false);
     const lineNumbersRef = useRef<HTMLPreElement>(null);
@@ -44,7 +47,7 @@ export default function PasteViewer({
         for (let i = 1; i <= maxRender; i++) {
             nums += i + '\n';
         }
-        if (linesCount > 3000) nums += '...\n';
+        if (linesCount > MAX_LINES) nums += '...\n';
         return nums;
     }, [linesCount, isTextMode]);
 
@@ -56,40 +59,41 @@ export default function PasteViewer({
         setIsAtBottom(target.scrollHeight - target.scrollTop - target.clientHeight <= 25);
     };
 
-    // Folder Warning (Styled like the "too large" limit warnings, cannot be dismissed)
+    // Folder warning (error)
     if (isFolder) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-lg mx-auto select-none font-mono">
                 <AlertTriangle size={36} className="text-rose-400" />
                 <p className="text-[#c9d1d9] font-semibold text-sm mt-3">{fileName}</p>
-                <p className="text-xs text-rose-400 mt-1">
-                    Folders cannot be previewed or edited
-                </p>
-                <p className="text-xs text-[#6e7681] mt-1">
-                    Packaged as ZIP archive
-                </p>
+                <p className="text-xs text-rose-400 mt-1">Folders cannot be previewed or edited</p>
+                <p className="text-xs text-[#6e7681] mt-1">Packaged as TAR archive</p>
             </div>
         );
     }
 
     // Binary Warning
-    if (isBinary) {
+    if ((isBinary || isTruncated) && !acceptedWarning) {
+        const fileType =
+            isTruncated && isBinary //
+                ? 'Large binary '
+                : isBinary
+                  ? 'Binary '
+                  : 'Large ';
+
         return (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-lg mx-auto select-none font-mono">
                 <AlertTriangle size={36} className="text-cyan-400/80" />
                 <p className="text-[#c9d1d9] font-semibold text-sm mt-3">{fileName}</p>
                 <p className="text-xs text-[#6e7681] mt-1 mb-4">
-                    Binary file detected ({formatSize(totalSize)}).
+                    {fileType} file detected ({formatSize(totalSize)}).
                 </p>
-                {onRevealAnyway && (
-                    <button
-                        type="button"
-                        onClick={onRevealAnyway}
-                        className="px-3.5 py-1.5 border border-[#30363d] text-cyan-400 hover:border-cyan-400 hover:bg-cyan-400/5 text-xs transition-colors font-medium active:scale-95"
-                    >
-                        {mode === 'edit' ? 'Edit anyway' : 'View anyway'}
-                    </button>
-                )}
+                <button
+                    type="button"
+                    onClick={onAcceptedWarning}
+                    className="px-3.5 py-1.5 border border-[#30363d] text-cyan-400 hover:border-cyan-400 hover:bg-cyan-400/5 text-xs transition-colors font-medium active:scale-95"
+                >
+                    {mode === 'edit' ? 'Edit anyway' : 'View anyway'}
+                </button>
             </div>
         );
     }
@@ -118,7 +122,7 @@ export default function PasteViewer({
             {/* Truncation indicator shown at scroll bottom */}
             {isTruncated && isAtBottom && (
                 <div className="absolute bottom-3 left-14 pl-4 font-mono text-xs text-[#6e7681] select-none pointer-events-none">
-                    ... Truncated to {formatSize(new Blob([value]).size)}
+                    ... Truncated to {formatSize(MAX_SAFE_EDIT_BYTES)}
                 </div>
             )}
         </div>

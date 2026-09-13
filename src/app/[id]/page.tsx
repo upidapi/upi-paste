@@ -23,13 +23,11 @@ export default function PastePage() {
     const params = useParams();
     const id = params.id! as string;
 
-    // const [copied, setCopied] = useState(false);
-
     const [gone, setGone] = useState(false);
     const [passwordInput, setPasswordInput] = useState('');
     const [submittedPassword, setSubmittedPassword] = useState('');
     const [oneTimeConfirmed, setOneTimeConfirmed] = useState(false);
-    const [revealBinaryOverride, setRevealBinaryOverride] = useState(false);
+    const [acceptedWarning, setAcceptedWarning] = useState(false);
 
     const { data, isLoading, isFetching, error } = useQuery({
         queryKey: ['resource', id, submittedPassword],
@@ -78,7 +76,7 @@ export default function PastePage() {
                 preview: new TextDecoder().decode(uPreview),
                 previewToken: res.previewToken,
                 isBinary: isProbBinary(uPreview),
-                isTruncated: res.preview.length < mPaste.size,
+                isTruncated: uPreview.length < mPaste.size,
             };
         },
         // Only fetch when unlocked, not 404, AND confirmed (if one-time)
@@ -89,7 +87,7 @@ export default function PastePage() {
     const paste = {
         preview: data2?.preview ?? '',
         previewToken: data2?.previewToken ?? '',
-        isBinary: revealBinaryOverride ? false : (data2?.isBinary ?? false),
+        isBinary: data2?.isBinary ?? false,
         isTruncated: data2?.isTruncated ?? false,
     };
 
@@ -146,17 +144,20 @@ export default function PastePage() {
     };
 
     const handleDelete = async () => {
+        // TODO: remove? 
         if (!confirm('Are you sure you want to delete this paste?')) return;
         try {
-            await fetch(`/api/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/${id}`, { method: 'DELETE' });
+
+            if (!res.ok) {
+                alert('failed to delete paste');
+                return;
+            }
         } catch {
-            // Callback stub
+            alert('failed to delete paste');
+            return;
         }
         router.push('/');
-    };
-
-    const handleViewAnyway = () => {
-        setRevealBinaryOverride(true);
     };
 
     // make paste/download red when one time
@@ -277,7 +278,10 @@ export default function PastePage() {
                         totalSize={mPaste.size}
                         mode="view"
                         placeholder=""
-                        onRevealAnyway={handleViewAnyway}
+                        acceptedWarning={acceptedWarning}
+                        onAcceptedWarning={() => setAcceptedWarning(true)}
+
+                        // onRevealAnyway={handleViewAnyway}
                     />
                 )}
             </div>

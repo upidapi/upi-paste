@@ -4,14 +4,71 @@ import React, { useState, useMemo, useRef } from 'react';
 import { FileUp, FolderUp, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import * as tus from 'tus-js-client';
 import { downloadZip, predictLength } from 'client-zip';
+import { createTarPacker } from 'modern-tar';
+import { useRouter } from 'next/navigation';
 
 import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
 import { formatSize, countLines, isProbBinary } from '~/lib/utils';
 import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES } from '~/lib/const';
-import { useRouter } from 'next/navigation';
 
 const URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+
+// TODO: make a more obvious way to clear the current paste edit
+//  important since user is locked out of editing on truncated files
+
+/**
+ * Archive format switch:
+ * - 'tar': Uses `modern-tar`. Zero CPU overhead, streams at full SSD/network wire speed. Recommended for multi-GB folders.
+ * - 'zip': Uses `client-zip`. Computes CRC-32 in JavaScript, CPU-bound at ~20-40 MB/s.
+ */
+// if you change this, change all references to tar <-> zip
+const ARCHIVE_FORMAT: 'tar' | 'zip' = 'tar';
+
+const UPLOAD_CHUNK_SIZE = 32 * 1024 * 1024;
+const SLICE_SIZE = 4 * 1024 * 1024;
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+const textEncoder = new TextEncoder();
+
+interface CustomFile extends File {
+    customRelativePath?: string;
+}
+
+interface SingleFile {
+    name: string;
+    content: string;
+    isText: boolean;
+    isBinary: boolean;
+    isTruncated: boolean;
+    isFolder: boolean;
+    files?: CustomFile[];
+    blob?: Blob;
+    size: number;
+}
+
+// Predicts exact TAR archive size upfront so TUS can report accurate progress
+function estimateTarSize(files: CustomFile[]): number {
+    let total = 0;
+    for (const f of files) {
+        const path = f.customRelativePath ?? f.webkitRelativePath ?? f.name;
+        // Standard 512-byte header
+        total += 512;
+        // PAX extended header if path > 100 chars, non-ASCII, or size >= 8 GiB
+        if (path.length > 100 || /[^\x00-\x7F]/.test(path) || f.size >= 8589934592) {
+            const paxPayloadLen = textEncoder.encode(`${path.length + 14} path=${path}\n`).length;
+            total += 512 + Math.ceil(paxPayloadLen / 512) * 512;
+        }
+        // File payload padded to 512-byte boundary
+        total += Math.ceil(f.size / 512) * 512;
+    }
+    // 1024-byte zero block EOF marker
+    total += 1024;
+    return total;
+}
 
 async function readFirst(blob: Blob, maxBytes: number): Promise<string> {
     const stream = blob.stream();
@@ -40,33 +97,20 @@ async function readFirst(blob: Blob, maxBytes: number): Promise<string> {
     return text;
 }
 
-interface CustomFile extends File {
-    customRelativePath?: string;
-}
-
-interface SingleFile {
-    name: string;
-    content: string;
-    isText: boolean;
-    isBinary: boolean;
-    isTruncated?: boolean;
-    isFolder?: boolean;
-    files?: CustomFile[];
-    blob?: Blob;
-    size: number;
-}
+const INITIAL_FILE: SingleFile = {
+    name: '',
+    content: '',
+    isTruncated: false,
+    isText: true,
+    isBinary: false,
+    isFolder: false,
+    size: 0,
+};
 
 export default function EditorPage() {
     const router = useRouter();
 
-    const [file, setFile] = useState<SingleFile>({
-        name: '',
-        content: '',
-        isText: true,
-        isBinary: false,
-        isFolder: false,
-        size: 0,
-    });
+    const [file, setFile] = useState<SingleFile>(INITIAL_FILE);
 
     const [title, setTitle] = useState('');
     const [expiry, setExpiry] = useState('1 week');
@@ -77,6 +121,7 @@ export default function EditorPage() {
     const [isDragging, setIsDragging] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
+    const [acceptedWarning, setAcceptedWarning] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const folderInputRef = useRef<HTMLInputElement>(null);
@@ -90,72 +135,71 @@ export default function EditorPage() {
     }, [file]);
 
     const isOverUploadLimit = stats.bytes > MAX_UPLOAD_BYTES;
+    const isEmpty = !file.content && !file.blob && !(file.files && file.files.length > 0) && !file.isFolder;
+    const isDisabled = isOverUploadLimit || isEmpty || isProcessing;
 
-    const handleSingleFile = async (rawFile: File) => {
-        setIsProcessing(true);
-        setStatusMessage('Reading file...');
+    const handleReset = () => {
+        setFile(INITIAL_FILE);
+        // setTitle('');
+        // setPassword('');
+        // setEncrypt(false);
+        // setOneTime(false);
+        // setExpiry('1 week');
+        setAcceptedWarning(false);
 
-        await new Promise((r) => setTimeout(r, 20));
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (folderInputRef.current) folderInputRef.current.value = '';
+    };
 
-        const isBinary = isProbBinary(
-            new Uint8Array(
-                await rawFile
-                    .slice(0, MAX_SAFE_EDIT_BYTES)
-                    .arrayBuffer(),
-            ),
-        );
-        const isText = !isBinary && rawFile.size <= MAX_SAFE_EDIT_BYTES;
+    const handleFileUpload = async (rawFile: File) => {
+        handleReset();
 
-        if (isText) {
-            const text = await rawFile.text();
-            setFile({
-                name: rawFile.name,
-                content: text,
-                isText: true,
-                isBinary: false,
-                isFolder: false,
-                blob: rawFile,
-                size: rawFile.size,
-            });
-        } else {
-            setFile({
-                name: rawFile.name,
-                content: '',
-                isText: false,
-                isBinary,
-                isFolder: false,
-                blob: rawFile,
-                size: rawFile.size,
-            });
-        }
+        const isBinary = isProbBinary(new Uint8Array(await rawFile.slice(0, MAX_SAFE_EDIT_BYTES).arrayBuffer()));
+        const isTruncated = rawFile.size > MAX_SAFE_EDIT_BYTES;
+        const isText = !isBinary && isTruncated;
+
+        setFile({
+            name: rawFile.name,
+            content: await readFirst(rawFile, MAX_SAFE_EDIT_BYTES),
+            isText,
+            isTruncated,
+            isBinary,
+            isFolder: false,
+            blob: rawFile,
+            size: rawFile.size,
+        });
         setTitle(rawFile.name);
-        setIsProcessing(false);
     };
 
     const handleFolderUpload = (rawFiles: FileList) => {
+        handleReset();
+
         const filesArray = Array.from(rawFiles) as CustomFile[];
-        if (filesArray.length === 0) return;
+        if (filesArray.length === 0) {
+            alert('Cant upload empty folder');
+            return;
+        }
 
         const folderName = filesArray[0]!.webkitRelativePath.split('/')[0] ?? 'archive';
         const totalSize = filesArray.reduce((acc, f) => acc + f.size, 0);
-        const zipName = `${folderName}.zip`;
+        const archiveName = `${folderName}.${ARCHIVE_FORMAT}`;
 
         setFile({
-            name: zipName,
+            name: archiveName,
             content: '',
             isText: false,
             isBinary: true,
             isFolder: true,
+            isTruncated: false,
             files: filesArray,
             size: totalSize,
         });
-        setTitle(zipName);
+        setTitle(archiveName);
     };
 
     const isFileEntry = (entry: FileSystemEntry): entry is FileSystemFileEntry => entry.isFile;
     const isDirectoryEntry = (entry: FileSystemEntry): entry is FileSystemDirectoryEntry => entry.isDirectory;
 
-    // Iteratively read directory batches to avoid call-stack overflow on huge directories
     const readAllEntries = async (dirReader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
         const entries: FileSystemEntry[] = [];
         while (true) {
@@ -173,23 +217,20 @@ export default function EditorPage() {
         const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
 
         if (isFileEntry(entry)) {
-            const file = (await new Promise<File>((resolve, reject) => {
+            const f = (await new Promise<File>((resolve, reject) => {
                 entry.file(resolve, reject);
             })) as CustomFile;
 
-            // Safely store relative path without throwing on non-configurable properties
-            file.customRelativePath = currentPath;
+            f.customRelativePath = currentPath;
             try {
-                Object.defineProperty(file, 'webkitRelativePath', {
+                Object.defineProperty(f, 'webkitRelativePath', {
                     value: currentPath,
                     writable: true,
                     configurable: true,
                 });
-            } catch {
-                // Ignore if read-only in strict browser environments
-            }
+            } catch {}
 
-            files.push(file);
+            files.push(f);
         } else if (isDirectoryEntry(entry)) {
             const reader = entry.createReader();
             const entries = await readAllEntries(reader);
@@ -215,49 +256,26 @@ export default function EditorPage() {
 
             const scannedFiles = await scanDirectory(entry);
             const totalSize = scannedFiles.reduce((acc, f) => acc + f.size, 0);
-            const zipName = `${entry.name}.zip`;
+            const archiveName = `${entry.name}.${ARCHIVE_FORMAT}`;
 
             setFile({
-                name: zipName,
+                name: archiveName,
                 content: '',
                 isText: false,
                 isBinary: true,
                 isFolder: true,
+                isTruncated: false,
                 files: scannedFiles,
                 size: totalSize,
             });
-            setTitle(zipName);
+            setTitle(archiveName);
             setIsProcessing(false);
         } else {
             const droppedFile = e.dataTransfer.files[0];
-            if (droppedFile) await handleSingleFile(droppedFile);
+            if (droppedFile) await handleFileUpload(droppedFile);
         }
     };
 
-    const handleEditAnyway = async () => {
-        if (!file.blob || file.isFolder) return;
-
-        setIsProcessing(true);
-        setStatusMessage('Reading preview...');
-        try {
-            const text = await readFirst(file.blob, MAX_SAFE_EDIT_BYTES);
-            const isTruncated = file.blob.size > MAX_SAFE_EDIT_BYTES;
-
-            setFile((prev) => ({
-                ...prev,
-                content: text,
-                isTruncated,
-                isText: true,
-                isBinary: false,
-            }));
-        } catch {
-            alert('Failed to read file as text.');
-        } finally {
-            setIsProcessing(false);
-        }
-    };
-
-    // Zip folders on the fly and stream directly via TUS
     const handlePaste = async () => {
         if (isOverUploadLimit) return;
 
@@ -268,33 +286,66 @@ export default function EditorPage() {
             const uploadName = title.trim() || file.name;
             const exp = EXPIRY_OPTIONS[expiry]!;
 
-            // Tus supports File, Blob, or a WHATWG stream Reader in browser environments
             let uploadSource: File | Blob | ReadableStreamDefaultReader<Uint8Array>;
             let totalUploadSize: number;
             let fileType: string;
 
             if (file.isFolder && file.files && file.files.length > 0) {
-                setStatusMessage('Initializing ZIP stream...');
+                if (ARCHIVE_FORMAT === 'tar') {
+                    setStatusMessage('Initializing TAR stream...');
+                    totalUploadSize = estimateTarSize(file.files);
 
-                const filesToZip = file.files.map((f) => ({
-                    name: f.customRelativePath ?? f.webkitRelativePath ?? f.name,
-                    input: f,
-                    lastModified: new Date(f.lastModified),
-                    size: f.size,
-                }));
+                    // Create streaming TAR packer
+                    const { readable, controller } = createTarPacker();
 
-                // 1. Predict ZIP length upfront (O(N) filenames/sizes, zero RAM consumed)
-                const predictedZipSize = Number(predictLength(filesToZip));
+                    // Prefix with `void` to satisfy ESLint floating-promise rule
+                    void (async () => {
+                        try {
+                            for (const f of file.files!) {
+                                const body = controller.add({
+                                    name: f.customRelativePath ?? f.webkitRelativePath ?? f.name,
+                                    size: f.size,
+                                    mtime: new Date(f.lastModified),
+                                });
 
-                // 2. Obtain stream response without materializing into a Blob
-                const zipResponse = downloadZip(filesToZip, { length: predictedZipSize });
-                if (!zipResponse.body) {
-                    throw new Error('ReadableStream is not supported by your browser.');
+                                const writer = body.getWriter();
+
+                                for (let offset = 0; offset < f.size; offset += SLICE_SIZE) {
+                                    const slice = f.slice(offset, Math.min(offset + SLICE_SIZE, f.size));
+                                    const arrayBuffer = await slice.arrayBuffer();
+                                    await writer.write(new Uint8Array(arrayBuffer));
+                                }
+
+                                await writer.close();
+                            }
+                            controller.finalize();
+                        } catch (err) {
+                            controller.error(err);
+                        }
+                    })();
+
+                    const stream = readable as ReadableStream<Uint8Array>;
+                    uploadSource = stream.getReader();
+                    fileType = 'application/x-tar';
+                } else {
+                    setStatusMessage('Initializing ZIP stream...');
+                    const filesToZip = file.files.map((f) => ({
+                        name: f.customRelativePath ?? f.webkitRelativePath ?? f.name,
+                        input: f,
+                        lastModified: new Date(f.lastModified),
+                        size: f.size,
+                    }));
+
+                    const predictedZipSize = Number(predictLength(filesToZip));
+                    const zipResponse = downloadZip(filesToZip, { length: predictedZipSize });
+                    if (!zipResponse.body) {
+                        throw new Error('ReadableStream is not supported by your browser.');
+                    }
+
+                    uploadSource = zipResponse.body.getReader();
+                    totalUploadSize = predictedZipSize;
+                    fileType = 'application/zip';
                 }
-
-                uploadSource = zipResponse.body.getReader();
-                totalUploadSize = predictedZipSize;
-                fileType = 'application/zip';
             } else if (file.isText) {
                 uploadSource = new Blob([file.content], { type: 'text/plain;charset=utf-8' });
                 totalUploadSize = uploadSource.size;
@@ -307,17 +358,17 @@ export default function EditorPage() {
                 throw new Error('No file payload found.');
             }
 
-            // Upload directly to TUS server
             await new Promise<void>((resolve, reject) => {
                 let pasteId = '';
                 let pasteToken = '';
+                let lastProgressUpdate = 0;
 
                 const upload = new tus.Upload(uploadSource, {
                     endpoint: `${URL}/api/upload`,
                     retryDelays: [0, 1000, 3000, 5000],
-                    chunkSize: 75 * 1024 * 1024,
+                    chunkSize: UPLOAD_CHUNK_SIZE,
                     uploadSize: totalUploadSize,
-                    storeFingerprintForResuming: false, // Prevents stale local storage fingerprints on streams
+                    storeFingerprintForResuming: false,
                     removeFingerprintOnSuccess: true,
                     metadata: {
                         json: JSON.stringify({
@@ -329,17 +380,19 @@ export default function EditorPage() {
                         }),
                     },
                     onError: (error) => {
-                        // Cancel stream reader if an unrecoverable failure occurs
                         if ('cancel' in uploadSource && typeof uploadSource.cancel === 'function') {
                             uploadSource.cancel().catch(() => ({}));
                         }
                         reject(error);
                     },
                     onProgress: (bytesUploaded, bytesTotal) => {
-                        const pct = bytesTotal ? Math.round((bytesUploaded / bytesTotal) * 100) : 0;
-                        setStatusMessage(
-                            `Uploading... ${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)} (${pct}%)`,
-                        );
+                        const now = performance.now();
+                        // throttle to 500ms to prevent ui load
+                        if (now - lastProgressUpdate > 500 || bytesUploaded === bytesTotal) {
+                            lastProgressUpdate = now;
+                            const pct = bytesTotal ? Math.round((bytesUploaded / bytesTotal) * 100) : 0;
+                            setStatusMessage(`Uploading... ${formatSize(bytesUploaded)} / ${formatSize(bytesTotal)} (${pct}%)`);
+                        }
                     },
                     onAfterResponse(_req, res) {
                         pasteId = res.getHeader('X-Paste-Id') ?? res.getHeader('x-paste-id') ?? '';
@@ -354,14 +407,17 @@ export default function EditorPage() {
                 upload.start();
             });
 
-            setStatusMessage('Upload complete!');
+            // this just flashes (ugly)
+            // setStatusMessage('Upload complete!');
         } catch (error) {
             console.error('Upload error:', error);
             alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } finally {
             setIsProcessing(false);
             setStatusMessage('');
-        }
+        } /* finally {
+            setIsProcessing(false);
+            setStatusMessage('');
+        } */
     };
 
     return (
@@ -380,7 +436,7 @@ export default function EditorPage() {
                 ref={fileInputRef}
                 className="hidden"
                 onChange={async (e) => {
-                    if (e.target.files?.[0]) await handleSingleFile(e.target.files[0]);
+                    if (e.target.files?.[0]) await handleFileUpload(e.target.files[0]);
                     e.target.value = '';
                 }}
             />
@@ -416,12 +472,15 @@ export default function EditorPage() {
                             }
                         }}
                         fileName={file.name}
-                        isBinary={!file.isText || file.isBinary}
+                        isBinary={file.isBinary}
                         isTruncated={file.isTruncated}
                         totalSize={stats.bytes}
                         isFolder={file.isFolder}
-                        mode={'edit'}
-                        onRevealAnyway={handleEditAnyway}
+                        acceptedWarning={acceptedWarning}
+                        onAcceptedWarning={() => setAcceptedWarning(true)}
+                        placeholder="paste, type, or drop a file or folder here ..."
+                        // TODO: maybe allow edit on truncated files
+                        mode={file.isTruncated ? 'view' : 'edit'}
                     />
                 </div>
 
@@ -445,7 +504,7 @@ export default function EditorPage() {
                                     className="flex items-center justify-center gap-1.5 py-2 border border-[#1b212b] text-[#8b949e] hover:border-cyan-500/40 hover:text-cyan-400 bg-[#080b0f] transition-colors text-xs"
                                 >
                                     <FolderUp size={14} />
-                                    <span>Folder (ZIP)</span>
+                                    <span>Folder ({ARCHIVE_FORMAT.toUpperCase()})</span>
                                 </button>
                             </div>
                         </div>
@@ -557,10 +616,14 @@ export default function EditorPage() {
                         </div>
 
                         <button
-                            disabled={isOverUploadLimit}
+                            disabled={isDisabled}
                             onClick={handlePaste}
-                            className={`w-full py-2.5 text-sm font-bold tracking-wider transition-colors shadow-lg active:scale-[0.99] ${
-                                isOverUploadLimit ? 'bg-[#21262d] text-[#6e7681] cursor-not-allowed' : 'bg-[#00d2d3] hover:bg-[#00e5ff] text-black'
+                            className={`w-full py-2.5 text-sm font-bold tracking-wider transition-all duration-150 border ${
+                                isOverUploadLimit
+                                    ? 'bg-[#1b212b] text-rose-400 border-rose-500/20 cursor-not-allowed'
+                                    : isEmpty
+                                      ? 'bg-[#14181f] text-[#484f58] border-[#1b212b] cursor-not-allowed select-none'
+                                      : 'bg-[#00d2d3] hover:bg-[#00e5ff] text-black shadow-lg shadow-cyan-500/10 active:scale-[0.99] cursor-pointer'
                             }`}
                         >
                             {isOverUploadLimit ? 'file too large' : 'paste'}

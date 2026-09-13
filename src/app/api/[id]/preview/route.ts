@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import type { NextRequest } from 'next/server';
 import { getPasteInfo, readFirstBytes, updateMetadata } from '~/lib/files';
 import fs from 'node:fs/promises';
-import { generateToken } from '~/lib/token';
+import { generateToken, verifyToken } from '~/lib/token';
 import { MAX_SAFE_EDIT_BYTES } from '~/lib/const';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

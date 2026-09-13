@@ -23,6 +23,7 @@
     "client-zip": "^2.5.0",
     "jszip": "^3.10.2",
     "lucide-react": "^1.44.0",
+    "modern-tar": "^0.8.5",
     "next": "^15.2.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

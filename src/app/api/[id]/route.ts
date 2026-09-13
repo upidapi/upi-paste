@@ -67,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         if (previewToken == null) {
             return new Response('Missing preview token', { status: 403 });
         }
-        if (verifyToken('preview', paste.id, previewToken)) {
+        if (!verifyToken('preview', paste.id, previewToken)) {
             return new Response('Wrong preview token', { status: 403 });
         }
     }
