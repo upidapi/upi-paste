@@ -23,10 +23,9 @@ export const PasteMetadataSchema = z.object({
 
     // previewToken: z.string().default(''),
     previewedAt: z.number().default(-1),
-    burnedAt: z.number().default(-1),
+    deletedAt: z.number().default(-1),
 });
 export type PasteMetadata = z.infer<typeof PasteMetadataSchema>;
-
 const usedIds = new Set<string>(['admin']);
 const dirPath = path.join(process.cwd(), 'data', 'paste');
 if (fs.existsSync(dirPath)) {
@@ -56,6 +55,8 @@ export function initPaste(params: z.input<typeof PasteMetadataSchema>) {
             ...params,
             filename: params.filename || `unamed-${timeStr}.txt`,
             filetype: params.filetype || 'application/octet-stream',
+            deletedAt: -1,
+            previewedAt: -1,
         }),
     );
 
@@ -97,7 +98,7 @@ export function getPasteInfo({ id, password }: { id: string; password?: string |
     const res = readFileSync(metaPath).toString();
     const meta = JSON.parse(res) as unknown as PasteMetadata;
 
-    if (meta.burnedAt != -1 && meta.burnedAt < Date.now())
+    if (meta.deletedAt != -1 && meta.deletedAt <= Date.now())
         return {
             ok: false as const,
             res: new Response('Paste not found', { status: 404 }),

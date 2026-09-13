@@ -24,10 +24,14 @@ curl -X DELETE "https://test.com/<id>?t=<token>"
 ```
 
 # docs
+
 params:
+
 - p: password
 - h: preview token
 - t: owner token
 
 # todo
 remove all alerts / popups ("confirm")?
+
+Actually delete pastes (do a sweep every x minutes)

@@ -10,9 +10,7 @@ import { useRouter } from 'next/navigation';
 import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
 import { formatSize, countLines, isProbBinary } from '~/lib/utils';
-import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES } from '~/lib/const';
-
-const URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+import { EXPIRY_OPTIONS, MAX_SAFE_EDIT_BYTES, MAX_UPLOAD_BYTES, URL } from '~/lib/const';
 
 // TODO: make a more obvious way to clear the current paste edit
 //  important since user is locked out of editing on truncated files

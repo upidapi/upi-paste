@@ -18,6 +18,10 @@ const PasteSchema = z.object({
     size: z.number(),
 });
 
+
+// TODO: add a visual timeout for the auto delete after preview
+//  also make it actually burn after that time
+
 export default function PastePage() {
     const router = useRouter();
     const params = useParams();
