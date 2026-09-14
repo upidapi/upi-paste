@@ -5,8 +5,6 @@ in
     packages =
       []
       ++ (with pkgs; [
-        bun
         nodejs_26
-        tsx
       ]);
   }
