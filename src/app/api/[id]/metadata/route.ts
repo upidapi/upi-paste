@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { type NextRequest } from 'next/server';
 import { getPasteInfo } from '~/lib/files';
 import fs from 'node:fs/promises';
 

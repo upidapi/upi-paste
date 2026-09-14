@@ -18,17 +18,16 @@ const PasteSchema = z.object({
     size: z.number(),
 });
 
-
 // TODO: add a visual timeout for the auto delete after preview
 //  also make it actually burn after that time
 
 export default function PastePage() {
     const router = useRouter();
     const params = useParams();
-     const searchParams = useSearchParams();
+    const searchParams = useSearchParams();
 
     const id = params.id! as string;
-    const ownerToken = searchParams.get('t') ?? "";
+    const ownerToken = searchParams.get('t') ?? '';
 
     const [gone, setGone] = useState(false);
     const [passwordInput, setPasswordInput] = useState('');
@@ -151,7 +150,7 @@ export default function PastePage() {
     };
 
     const handleDelete = async () => {
-        // TODO: remove? 
+        // TODO: remove?
         if (!confirm('Are you sure you want to delete this paste?')) return;
         try {
             const res = await fetch(`/api/${id}?t=${ownerToken}`, { method: 'DELETE' });
@@ -172,7 +171,7 @@ export default function PastePage() {
     return (
         <div className="flex flex-col h-screen w-screen bg-[#0b0e14] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm">
             <TopBar showExpiry={!isNotFound && mPaste.expiry !== -1} expiresAt={mPaste.expiry}>
-                {!(isNotFound || isLoading || ownerToken == "") && (
+                {!(isNotFound || isLoading || ownerToken == '') && (
                     <button
                         type="button"
                         onClick={handleDelete}
