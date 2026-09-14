@@ -19,7 +19,7 @@ export async function PUT(
         }>;
     },
 ) {
-    const filename = (await params).id;
+    const filename = (await params)?.id;
     const sParams = req.nextUrl.searchParams;
 
     const rExpiry = sParams.get('expiry') ?? '7d';
@@ -37,9 +37,10 @@ export async function PUT(
                   y: 1000 * 60 * 60 * 24 * 365,
               }[rExpiry.at(-1)!]!;
 
+    
     const { id, filePath } = initPaste({
         filename: filename ?? '',
-        filetype: '',
+        filetype: sParams.get('type') ?? '',
         expiry,
         oneTime: sParams.has('one-time'),
         password: sParams.get('psw') ?? '',
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const pasteInfo = getPasteInfo({
         id,
-        password: sParams.get('p'),
+        password: sParams.get('psw'),
     });
 
     if (!pasteInfo.ok) return pasteInfo.res;
@@ -108,7 +109,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const id = (await params).id;
     const sParams = req.nextUrl.searchParams;
 
-    const password = sParams.get('p');
+    const password = sParams.get('psw');
     const ownerToken = sParams.get('t');
 
     if (id === undefined) return new Response('Missing id', { status: 400 });

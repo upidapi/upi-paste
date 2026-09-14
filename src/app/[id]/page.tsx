@@ -71,7 +71,7 @@ export default function PastePage() {
     const { data: data2 } = useQuery({
         queryKey: ['preview', id, submittedPassword],
         queryFn: async () => {
-            const sParams = new URLSearchParams({ p: submittedPassword });
+            const sParams = new URLSearchParams({ psw: submittedPassword });
             const res = await fetch(`/api/${id}/preview?${sParams.toString()}`);
             if (!res.ok) throw new Error(String(res.status));
             return res.json() as Promise<{ preview: string; previewToken: string }>;
@@ -105,7 +105,7 @@ export default function PastePage() {
     };
 
     const handleDownload = () => {
-        const searchParams = new URLSearchParams({ p: mPaste.password, h: paste.previewToken });
+        const searchParams = new URLSearchParams({ psw: mPaste.password, h: paste.previewToken });
         const url = `/api/${id}?${searchParams.toString()}`;
 
         const a = document.createElement('a');

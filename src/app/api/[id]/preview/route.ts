@@ -11,7 +11,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const pasteInfo = getPasteInfo({
         id,
-        password: sParams.get('p'),
+        password: sParams.get('psw'),
     });
 
     if (!pasteInfo.ok) return pasteInfo.res;
