@@ -6,7 +6,6 @@ const USAGE_NOTE = `# Upload
 curl -T file.txt ${URL}             # upload
 curl -T file.txt ${URL}/rename.txt  # upload override name
 echo "test" | curl -T - ${URL}      # pipe stdin
-echo "test" | nc test.com 9999                # raw TCP
 # => ${URL}/<id>?t=<token>
 
 # Query params: 
