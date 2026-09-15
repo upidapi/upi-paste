@@ -362,7 +362,7 @@ export default function EditorPage() {
                 let lastProgressUpdate = 0;
 
                 const upload = new tus.Upload(uploadSource, {
-                    endpoint: `${URL}/api/upload`,
+                    endpoint: `/api/upload`,
                     retryDelays: [0, 1000, 3000, 5000],
                     chunkSize: UPLOAD_CHUNK_SIZE,
                     uploadSize: totalUploadSize,

@@ -10,7 +10,8 @@ import { URL } from '~/lib/const';
 const server = new Server({
     // `path` needs to match the route declared by the next file router
     // ie /api/upload
-    path: `${URL}/api/upload`,
+    path: `/api/upload`,
+    relativeLocation: true,
     datastore: new FileStore({ directory: './data/tmp' }),
 
     onUploadCreate: async (_req, upload) => {
