@@ -11,7 +11,7 @@ echo "test" | curl -T - ${URL}      # pipe stdin
 # Query params: 
 # one-time
 # psw=<pass>
-# expiry=<abs ms|rel time{s,m,h,d,w,M,y}>,
+# expiry=<-1 (never)|unix time|rel time{s,m,h,d,w,M,y}>,
 # type=<mime type>
 curl -T file.txt "${URL}?one-time&psw=1234&expiry=1789338467"
 curl -T file.txt "${URL}/rename.txt/?expiry=1d&type=text%2Fcsv"
