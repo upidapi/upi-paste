@@ -6,6 +6,7 @@ import { Home } from 'lucide-react';
 
 interface TopBarProps {
     showExpiry?: boolean;
+    filename?: string;
     expiresAt?: Date | string | number | null;
     children?: React.ReactNode;
 }
@@ -20,7 +21,7 @@ function formatTimeRemaining(target: Date | string | number): string {
     let rem = diff % (7 * 24 * 3600);
 
     const days = Math.floor(rem / (24 * 3600));
-    rem %= (24 * 3600);
+    rem %= 24 * 3600;
 
     const hours = Math.floor(rem / 3600);
     rem %= 3600;
@@ -38,7 +39,7 @@ function formatTimeRemaining(target: Date | string | number): string {
     return `expires in ${parts.join(', ')}`;
 }
 
-export default function TopBar({ showExpiry = false, expiresAt, children }: TopBarProps) {
+export default function TopBar({ filename, showExpiry = false, expiresAt, children }: TopBarProps) {
     const [countdown, setCountdown] = useState<string>('');
 
     useEffect(() => {
@@ -57,26 +58,22 @@ export default function TopBar({ showExpiry = false, expiresAt, children }: TopB
     }, [showExpiry, expiresAt]);
 
     return (
-        <header className="h-10 w-full bg-[#0e1116] border-b border-[#1b212b] px-3.5 flex items-center justify-between select-none text-xs font-mono">
+        <header className="relative h-10 w-full bg-[#0e1116] border-b border-[#1b212b] px-3.5 flex items-center justify-between select-none text-xs font-mono">
             <div className="flex items-center gap-3">
-                <Link
-                    href="/"
-                    title="Home"
-                    className="text-[#8b949e] hover:text-[#00d2d3] transition-colors flex items-center justify-center p-1 rounded"
-                >
+                <Link href="/" title="Home" className="text-[#8b949e] hover:text-[#00d2d3] transition-colors flex items-center justify-center p-1 rounded">
                     <Home size={16} />
                 </Link>
 
-                {showExpiry && countdown && (
-                    <span className="text-[#8b949e] tracking-tight">{countdown}</span>
-                )}
+                {showExpiry && countdown && <span className="text-[#8b949e] font-mono tracking-tight">{countdown}</span>}
             </div>
 
-            {children && (
-                <div className="flex items-center gap-1.5 text-[#8b949e]">
-                    {children}
-                </div>
+            {filename && (
+                <span className="absolute left-1/2 -translate-x-1/2 max-w-[50%] truncate text-[#8b949e] font-mono tracking-tight">
+                    {filename}
+                </span>
             )}
+
+            {children && <div className="flex items-center gap-1.5 text-[#8b949e]">{children}</div>}
         </header>
     );
 }

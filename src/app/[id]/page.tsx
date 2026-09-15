@@ -39,7 +39,7 @@ export default function PastePage() {
     const { data, isLoading, isFetching, error } = useQuery({
         queryKey: ['resource', id, submittedPassword],
         queryFn: async () => {
-            const searchParams = new URLSearchParams(submittedPassword === '' ? {} : { p: submittedPassword });
+            const searchParams = new URLSearchParams(submittedPassword === '' ? {} : { psw: submittedPassword });
             const res = await fetch(`/api/${id}/metadata?${searchParams.toString()}`);
 
             if (!res.ok) {
@@ -120,7 +120,7 @@ export default function PastePage() {
     };
 
     const handleCopy = async () => {
-        const searchParams = new URLSearchParams({ p: mPaste.password, h: paste.previewToken });
+        const searchParams = new URLSearchParams({ psw: mPaste.password, h: paste.previewToken });
         const url = `/api/${id}?${searchParams.toString()}`;
 
         try {
@@ -171,7 +171,9 @@ export default function PastePage() {
     const oneTimeRed = !mPaste.oneTime ? '' : 'text-rose-400';
     return (
         <div className="flex flex-col h-screen w-screen bg-[#0b0e14] text-[#b8bfc9] font-mono select-none overflow-hidden text-sm">
-            <TopBar showExpiry={!isNotFound && mPaste.expiry !== -1} expiresAt={mPaste.expiry}>
+            <TopBar showExpiry={!isNotFound && mPaste.expiry !== -1} 
+                filename={mPaste.filename}
+                expiresAt={mPaste.expiry}>
                 {!(isNotFound || isLoading || ownerToken == '') && (
                     <button
                         type="button"
