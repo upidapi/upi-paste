@@ -5,11 +5,12 @@ import { generateToken } from '~/lib/token';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { initPaste, PasteMetadataSchema } from '~/lib/files';
+import { URL } from '~/lib/const';
 
 const server = new Server({
     // `path` needs to match the route declared by the next file router
     // ie /api/upload
-    path: '/api/upload',
+    path: `${URL}/api/upload`,
     datastore: new FileStore({ directory: './data/tmp' }),
 
     onUploadCreate: async (_req, upload) => {
