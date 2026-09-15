@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams, useSearchParams } from 'next/navigation';
-import { Trash2, Download, Copy, Lock, AlertTriangle, KeyRound, ArrowRight, FileQuestion } from 'lucide-react';
+import { Trash2, Download, Copy, Lock, AlertTriangle, KeyRound, ArrowRight, FileQuestion, Check } from 'lucide-react';
 import TopBar from '~/_components/top-bar';
 import PasteViewer from '~/_components/paste-viewer';
 import * as z from 'zod';
@@ -34,6 +34,7 @@ export default function PastePage() {
     const [submittedPassword, setSubmittedPassword] = useState('');
     const [oneTimeConfirmed, setOneTimeConfirmed] = useState(false);
     const [acceptedWarning, setAcceptedWarning] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     const { data, isLoading, isFetching, error } = useQuery({
         queryKey: ['resource', id, submittedPassword],
@@ -140,8 +141,8 @@ export default function PastePage() {
                 await navigator.clipboard.writeText(text);
             }
 
-            // setCopied(true);
-            // setTimeout(() => setCopied(false), 2000);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1000);
         } catch (err) {
             console.error('Failed to copy paste content:', err);
         }
@@ -199,8 +200,8 @@ export default function PastePage() {
                             // disabled={!paste.preview}
                             className={`${oneTimeRed} p-1.5 text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1b212b]/60 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none`}
                         >
-                            {/* {copied ? <Check size={16} className="text-cyan-400" /> : <Copy size={16} />} */}
-                            <Copy size={16} />
+                            {copied ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
+                            {/* <Copy size={16} /> */}
                         </button>
                     </>
                 )}
