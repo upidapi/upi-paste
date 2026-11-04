@@ -5,14 +5,14 @@ import { generateToken } from '~/lib/token';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { initPaste, PasteMetadataSchema } from '~/lib/files';
-import { URL } from '~/lib/const';
+import { DATA_DIR } from '~/lib/const-server';
 
 const server = new Server({
     // `path` needs to match the route declared by the next file router
     // ie /api/upload
     path: `/api/upload`,
     relativeLocation: true,
-    datastore: new FileStore({ directory: './data/tmp' }),
+    datastore: new FileStore({ directory: `${DATA_DIR}/tmp` }),
 
     onUploadCreate: async (_req, upload) => {
         // console.log(req, upload);
@@ -36,8 +36,8 @@ const server = new Server({
                 JSON.parse(upload.metadata!.json!), //
             ),
         );
-        
-        const tPath = path.join('data/tmp', upload.id);
+
+        const tPath = path.join(`${DATA_DIR}/tmp`, upload.id);
 
         await fs.rm(tPath + '.json');
         await fs.rename(tPath, filePath);
@@ -47,7 +47,7 @@ const server = new Server({
             headers: {
                 'Access-Control-Expose-Headers': 'X-Paste-Id, X-Paste-Token',
                 'X-Paste-Id': id,
-                'X-Paste-Token': generateToken("owner", id),
+                'X-Paste-Token': generateToken('owner', id),
             },
         };
         // return {

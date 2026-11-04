@@ -4,6 +4,7 @@ import fs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod';
 import { open, readFile, writeFile } from 'node:fs/promises';
+import { DATA_DIR } from './const-server';
 // import fs from 'node:fs/promises';
 
 // import { readdir } from 'fs/promises';
@@ -43,7 +44,7 @@ export function initPaste(params: z.input<typeof PasteMetadataSchema>) {
     const id = createUniqueId((id) => usedIds.has(id));
     usedIds.add(id);
 
-    const filePath = path.join(process.cwd(), 'data/paste', id);
+    const filePath = path.join(process.cwd(), `${DATA_DIR}/paste`, id);
     const metaPath = filePath + '.json';
 
     const timeStr = new Date().toISOString().replace('T', '_').slice(0, 19);

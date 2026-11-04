@@ -21,6 +21,7 @@
     "@tus/file-store": "^2.1.1",
     "@tus/server": "^2.4.5",
     "client-zip": "^2.5.0",
+    "geist": "^1.9.1",
     "jszip": "^3.10.2",
     "lucide-react": "^1.44.0",
     "modern-tar": "^0.8.5",

@@ -1,8 +1,8 @@
-export const URL = "https://p.upidapi.dev"
-// export const URL = "http://localhost:3000"
+import { env } from '~/env';
 
+export const URL = env.NEXT_PUBLIC_URL ?? `http://localhost:${env.PORT}`;
 export const MAX_SAFE_EDIT_BYTES = 1 * 1024 * 1024; // 1 MB
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024; // 10 GB
+export const MAX_UPLOAD_BYTES = env.MAX_UPLOAD_BYTES ?? 50 * 1024 * 1024 * 1024; // 10 GB
 
 export const EXPIRY_OPTIONS: Record<string, number> = {
     never: -1,

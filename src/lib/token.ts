@@ -1,7 +1,8 @@
+import { env } from "~/env";
 import crypto from 'crypto';
 
 // TODO: fix
-const SECRET_KEY = process.env.TOKEN_SECRET ?? 'your-secret-key';
+const SECRET_KEY = env.TOKEN_SECRET;
 
 const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
