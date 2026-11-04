@@ -2,10 +2,9 @@
   config,
   lib,
   pkgs,
-  self' ? null,
   ...
 }: let
-  inherit (lib) mkOption types mkEnableOption mkIf mkPackageOption getExe;
+  inherit (lib) mkOption types mkEnableOption mkIf getExe;
   cfg = config.services.upi-paste;
   pkg = pkgs.callPackage ./package.nix {};
 in {
@@ -36,13 +35,20 @@ in {
       description = "Port to listen on.";
     };
 
+    url = mkOption {
+      type = types.str;
+      default = "http://127.0.0.1:${toString cfg.port}";
+      defaultText = lib.literalExpression "http://127.0.0.1:\${toString config.services.upi-paste.port}";
+      description = "Full URL to access the service.";
+    };
+
     # host = mkOption {
     #   type = types.str;
     #   default = "127.0.0.1";
     #   description = "Host/IP address to bind to.";
     # };
     maxUploadBytes = mkOption {
-      type = types.nuber;
+      type = types.number;
       default = 512 * 1024 * 1024; # 0.5 Gb
       description = "Max upload size allowed.";
     };
@@ -95,8 +101,9 @@ in {
         {
           NODE_ENV = "production";
           PORT = toString cfg.port;
-          MAX_UPLOAD_BYTES = cfg.maxUploadBytes;
           DATA_DIR = toString cfg.dataDir;
+          NEXT_PUBLIC_URL = toString cfg.url;
+          NEXT_PUBLIC_MAX_UPLOAD_BYTES = toString cfg.maxUploadBytes;
         }
         // cfg.extraEnvironment;
 

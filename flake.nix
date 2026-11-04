@@ -20,10 +20,14 @@
         "aarch64-darwin"
       ];
 
+      flake.nixosModules = rec {
+        default = upi-paste;
+        upi-paste = import ./nix/modules.nix;
+      };
+
       perSystem = {pkgs, ...}: {
         devShells.default = pkgs.mkShellNoCC {
           name = "";
-          # inputsFrom = [mainPackage];
           packages = with pkgs; [
             nodejs_26
           ];

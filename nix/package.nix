@@ -8,7 +8,7 @@ buildNpmPackage {
   pname = "upi-paste";
   version = "0.1.0";
 
-  src = ./.;
+  src = ../.;
 
   # npmDepsHash = lib.fakeHash;
   npmDepsHash = "sha256-+YgXnII+Co8RP1rzcB8v7JHrlIeUCoZUBGN/s2BqhLA=";

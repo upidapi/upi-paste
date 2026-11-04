@@ -7,11 +7,8 @@ export const env = createEnv({
      */
     server: {
         PORT: z.coerce.number().default(3000),
-        URL: z.string().url().optional(),
         DATA_DIR: z.string(),
         TOKEN_SECRET: z.string(),
-        // Use z.coerce.number() because process.env variables are strings
-        MAX_UPLOAD_BYTES: z.coerce.number().optional(),
         NODE_ENV: z.enum(['development', 'test', 'production']),
     },
 
@@ -20,7 +17,8 @@ export const env = createEnv({
      */
     client: {
         // Give it a default or make it optional so builds don't fail without it
-        NEXT_PUBLIC_URL: z.string().url().optional(),
+        NEXT_PUBLIC_URL: z.string().url().default(`http://localhost:${process.env.PORT ?? 3000}`),
+        NEXT_PUBLIC_MAX_UPLOAD_BYTES: z.coerce.number().optional(),
     },
 
     /**
@@ -28,12 +26,11 @@ export const env = createEnv({
      */
     runtimeEnv: {
         PORT: process.env.PORT,
-        URL: process.env.URL,
         DATA_DIR: process.env.DATA_DIR,
         TOKEN_SECRET: process.env.TOKEN_SECRET,
-        MAX_UPLOAD_BYTES: process.env.MAX_UPLOAD_BYTES,
         NODE_ENV: process.env.NODE_ENV,
         NEXT_PUBLIC_URL: process.env.NEXT_PUBLIC_URL,
+        NEXT_PUBLIC_MAX_UPLOAD_BYTES: process.env.NEXT_PUBLIC_MAX_UPLOAD_BYTES,
     },
 
     /**
